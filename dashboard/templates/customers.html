@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Customers - Zemest{% endblock %}
+
+{% block extra_head %}
+<style>
+    .customer-info { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1rem; }
+    .customer-info dt { font-weight: 600; color: var(--pico-muted-color); font-size: 0.85rem; }
+    .customer-info dd { margin: 0 0 0.5rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="section-header">
+    <h2>Customers</h2>
+</div>
+
+<input type="text" id="search-input" placeholder="Search by name or phone..." style="margin-bottom: 1rem;">
+<div id="customers-table"></div>
+
+<!-- Customer Detail Modal -->
+<dialog id="customer-modal">
+    <article style="min-width: 700px; max-height: 85vh; overflow-y: auto;">
+        <header>
+            <div class="section-header">
+                <h3 id="customer-title"></h3>
+                <button class="outline secondary" style="padding:0.2rem 0.6rem;" onclick="document.getElementById('customer-modal').close()">Close</button>
+            </div>
+        </header>
+        <div id="customer-detail"></div>
+    </article>
+</dialog>
+
+<!-- Edit Customer Modal -->
+<dialog id="edit-customer-modal">
+    <article style="min-width: 500px;">
+        <header><h3>Edit Customer</h3></header>
+        <form id="edit-customer-form">
+            <input type="hidden" id="edit-cust-id">
+            <div class="grid">
+                <div><label>Name</label><input type="text" id="edit-cust-name"></div>
+                <div><label>Phone</label><input type="text" id="edit-cust-phone" placeholder="01XXXXXXXXX"></div>
+            </div>
+            <div class="grid">
+                <div><label>Governorate</label><input type="text" id="edit-cust-governorate"></div>
+                <div><label>City</label><input type="text" id="edit-cust-city"></div>
+            </div>
+            <div class="grid">
+                <div><label>Area</label><input type="text" id="edit-cust-area"></div>
+                <div><label>Address</label><input type="text" id="edit-cust-address"></div>
+            </div>
+            <footer>
+                <button type="button" class="secondary" onclick="document.getElementById('edit-customer-modal').close()">Cancel</button>
+                <button type="submit">Save</button>
+            </footer>
+        </form>
+    </article>
+</dialog>
+
+<script>
+const tenantId = '{{ tenant_id }}';
+const headers = {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`};
+
+let searchTimeout;
+document.getElementById('search-input').addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => loadCustomers(e.target.value), 300);
+});
+
+async function loadCustomers(search = '') {
+    const url = search
+        ? `/api/tenants/${tenantId}/customers?search=${encodeURIComponent(search)}`
+        : `/api/tenants/${tenantId}/customers`;
+    const resp = await fetch(url, {headers});
+    const data = await resp.json();
+    const container = document.getElementById('customers-table');
+
+    if (data.customers.length === 0) {
+        container.innerHTML = '<article><p>No customers yet. Customers are created automatically when they message your business.</p></article>';
+        return;
+    }
+
+    container.innerHTML = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Location</th>
+                    <th>Orders</th>
+                    <th>Spent</th>
+                    <th>Since</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.customers.map(c => {
+                    const custId = escapeHtml(c.id);
+                    return `
+                    <tr>
+                        <td><strong>${escapeHtml(c.name || 'Unknown')}</strong></td>
+                        <td>${escapeHtml(c.phone || '-')}</td>
+                        <td style="font-size:0.85rem;">${[escapeHtml(c.city), escapeHtml(c.governorate)].filter(Boolean).join(', ') || '-'}</td>
+                        <td>${c.orders_count}</td>
+                        <td>ج.م${escapeHtml(c.total_spent.toLocaleString())}</td>
+                        <td style="font-size:0.85rem;">${new Date(c.created_at).toLocaleDateString('ar-EG')}</td>
+                        <td>
+                            <button class="outline" style="padding:0.2rem 0.5rem;" onclick="showCustomer('${custId}')">View</button>
+                            <button class="outline secondary" style="padding:0.2rem 0.5rem;" onclick="editCustomer('${custId}')">Edit</button>
+                        </td>
+                    </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+        <small>Total: ${data.total} customers</small>
+    `;
+}
+
+async function showCustomer(id) {
+    const resp = await fetch(`/api/tenants/${tenantId}/customers/${id}`, {headers});
+    const c = await resp.json();
+
+    document.getElementById('customer-title').textContent = c.name || 'Customer';
+    document.getElementById('customer-detail').innerHTML = `
+        <dl class="customer-info">
+            <dt>Phone</dt><dd>${escapeHtml(c.phone || '-')}</dd>
+            <dt>Location</dt><dd>${[escapeHtml(c.area), escapeHtml(c.city), escapeHtml(c.governorate)].filter(Boolean).join(', ') || '-'}</dd>
+            <dt>Address</dt><dd>${escapeHtml(c.address_detail || '-')}</dd>
+            <dt>Total Spent</dt><dd>ج.م${escapeHtml(c.total_spent.toLocaleString())}</dd>
+            <dt>Customer Since</dt><dd>${new Date(c.created_at).toLocaleDateString('ar-EG')}</dd>
+            <dt>Conversations</dt><dd>${c.conversations.length}</dd>
+        </dl>
+
+        <h4>Orders (${c.orders.length})</h4>
+        ${c.orders.length > 0 ? `
+            <table>
+                <thead><tr><th>Order #</th><th>Total</th><th>Status</th><th>Date</th></tr></thead>
+                <tbody>
+                    ${c.orders.map(o => {
+                        const ordStatus = escapeHtml(o.status);
+                        return `
+                        <tr>
+                            <td>${escapeHtml(o.order_number)}</td>
+                            <td>ج.م${escapeHtml(o.total)}</td>
+                            <td><span class="badge badge-${ordStatus}">${ordStatus}</span></td>
+                            <td style="font-size:0.85rem;">${new Date(o.created_at).toLocaleDateString('ar-EG')}</td>
+                        </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        ` : '<p><small>No orders yet.</small></p>'}
+
+        <h4>Conversations (${c.conversations.length})</h4>
+        ${c.conversations.length > 0 ? `
+            <ul>
+                ${c.conversations.map(cv => {
+                    const cvStatus = escapeHtml(cv.status);
+                    return `
+                    <li>
+                        <span class="badge badge-${cvStatus}">${cvStatus}</span>
+                        Last active: ${new Date(cv.last_message_at).toLocaleString('ar-EG')}
+                        <a href="/dashboard/${tenantId}/conversations" style="margin-left:0.5rem;">View</a>
+                    </li>
+                    `;
+                }).join('')}
+            </ul>
+        ` : '<p><small>No conversations yet.</small></p>'}
+    `;
+    document.getElementById('customer-modal').showModal();
+}
+
+async function editCustomer(id) {
+    const resp = await fetch(`/api/tenants/${tenantId}/customers/${id}`, {headers});
+    const c = await resp.json();
+    document.getElementById('edit-cust-id').value = id;
+    document.getElementById('edit-cust-name').value = c.name || '';
+    document.getElementById('edit-cust-phone').value = c.phone || '';
+    document.getElementById('edit-cust-governorate').value = c.governorate || '';
+    document.getElementById('edit-cust-city').value = c.city || '';
+    document.getElementById('edit-cust-area').value = c.area || '';
+    document.getElementById('edit-cust-address').value = c.address_detail || '';
+    document.getElementById('edit-customer-modal').showModal();
+}
+
+document.getElementById('edit-customer-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('edit-cust-id').value;
+    const body = {};
+    const fields = ['name', 'phone', 'governorate', 'city', 'area'];
+    const ids = ['edit-cust-name', 'edit-cust-phone', 'edit-cust-governorate', 'edit-cust-city', 'edit-cust-area'];
+    fields.forEach((f, i) => {
+        const v = document.getElementById(ids[i]).value.trim();
+        if (v) body[f] = v;
+    });
+    const addr = document.getElementById('edit-cust-address').value.trim();
+    if (addr) body.address_detail = addr;
+
+    const resp = await fetch(`/api/tenants/${tenantId}/customers/${id}`, {
+        method: 'PATCH', headers, body: JSON.stringify(body)
+    });
+    if (resp.ok) {
+        document.getElementById('edit-customer-modal').close();
+        loadCustomers();
+    }
+});
+
+loadCustomers();
+</script>
+{% endblock %}

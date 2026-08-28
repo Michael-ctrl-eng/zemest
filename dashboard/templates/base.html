@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Zemest{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        :root { --pico-font-size: 15px; }
+        body { min-height: 100vh; display: flex; flex-direction: column; }
+        main.container { flex: 1; }
+
+        /* Top nav */
+        .top-nav {
+            background: #1a1a2e;
+            padding: 0.6rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
+        .top-nav .brand:hover { color: #e2e8f0; }
+        .top-nav .nav-links { display: flex; gap: 0.3rem; align-items: center; }
+        .top-nav .nav-links a {
+            color: #cbd5e1;
+            text-decoration: none;
+            padding: 0.35rem 0.7rem;
+            border-radius: 0.4rem;
+            font-size: 0.85rem;
+            transition: all 0.15s;
+        }
+        .top-nav .nav-links a:hover, .top-nav .nav-links a.active {
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+        }
+        .top-nav .nav-right { display: flex; align-items: center; gap: 0.8rem; }
+        .top-nav .user-badge {
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+        .top-nav .logout-btn {
+            color: #f87171;
+            background: none;
+            border: 1px solid #f87171;
+            padding: 0.25rem 0.6rem;
+            border-radius: 0.4rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+        .top-nav .logout-btn:hover { background: #f87171; color: #fff; }
+
+        /* Stats grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 0.8rem;
+            margin-bottom: 1.5rem;
+        }
+        .stat-card {
+            text-align: center;
+            padding: 1.2rem 0.8rem;
+            border-radius: 0.5rem;
+        }
+        .stat-card h2 {
+            margin: 0;
+            font-size: 1.8rem;
+            color: var(--pico-primary);
+        }
+        .stat-card p {
+            margin: 0.3rem 0 0;
+            font-size: 0.85rem;
+            color: var(--pico-muted-color);
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.55rem;
+            border-radius: 1rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-pending { background: #fef3cd; color: #856404; }
+        .badge-confirmed { background: #d1ecf1; color: #0c5460; }
+        .badge-shipped { background: #cfe2ff; color: #084298; }
+        .badge-delivered { background: #d1e7dd; color: #0f5132; }
+        .badge-cancelled { background: #f8d7da; color: #842029; }
+        .badge-active { background: #d1ecf1; color: #0c5460; }
+        .badge-completed { background: #d1e7dd; color: #0f5132; }
+        .badge-failed { background: #f8d7da; color: #842029; }
+        .badge-crawling, .badge-indexing { background: #fff3cd; color: #664d03; }
+        .badge-in_stock { background: #d1e7dd; color: #0f5132; }
+        .badge-out_of_stock { background: #f8d7da; color: #842029; }
+        .badge-limited { background: #fff3cd; color: #664d03; }
+
+        /* Chat styles */
+        .chat-container {
+            max-height: 500px;
+            overflow-y: auto;
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            background: var(--pico-card-background-color);
+        }
+        .chat-message { margin-bottom: 0.8rem; display: flex; }
+        .chat-message.customer { justify-content: flex-end; }
+        .chat-message.assistant { justify-content: flex-start; }
+        .chat-bubble {
+            max-width: 75%;
+            padding: 0.7rem 1rem;
+            border-radius: 1rem;
+            line-height: 1.5;
+            font-size: 0.92rem;
+        }
+        .customer .chat-bubble {
+            background: #1e40af;
+            color: #fff;
+            border-bottom-right-radius: 0.2rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .assistant .chat-bubble {
+            background: #f1f5f9;
+            color: #1e293b;
+            border-bottom-left-radius: 0.2rem;
+        }
+        .assistant .chat-bubble a { color: #2563eb; }
+        .assistant .chat-bubble strong { color: #0f172a; }
+        .assistant .chat-bubble h1, .assistant .chat-bubble h2,
+        .assistant .chat-bubble h3, .assistant .chat-bubble h4 {
+            margin: 0.4rem 0 0.2rem; font-size: 0.95rem; color: #1e293b;
+        }
+        .assistant .chat-bubble ul, .assistant .chat-bubble ol {
+            margin: 0.3rem 0; padding-left: 1.2rem;
+        }
+        .assistant .chat-bubble p { margin: 0.3rem 0; }
+
+        /* Token usage bar */
+        .token-bar {
+            display: flex;
+            gap: 1.5rem;
+            padding: 0.6rem 1rem;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            font-size: 0.8rem;
+            color: #64748b;
+            margin-bottom: 1rem;
+        }
+        .token-bar .token-item { display: flex; align-items: center; gap: 0.3rem; }
+        .token-bar .token-value { font-weight: 600; color: #334155; }
+
+        /* Section headers */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        .section-header h2, .section-header h3 { margin: 0; }
+
+        /* Flash messages */
+        .flash-success { padding: 0.8rem 1rem; border-radius: 0.4rem; background: #d1e7dd; color: #0f5132; margin-bottom: 1rem; }
+        .flash-error { padding: 0.8rem 1rem; border-radius: 0.4rem; background: #f8d7da; color: #842029; margin-bottom: 1rem; }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <div class="top-nav">
+        <a href="/dashboard" class="brand">Zemest</a>
+        {% if tenant_id %}
+        <div class="nav-links">
+            <a href="/dashboard/{{ tenant_id }}/chat" id="nav-chat">Chat</a>
+            <a href="/dashboard/{{ tenant_id }}/products" id="nav-products">Products</a>
+            <a href="/dashboard/{{ tenant_id }}/orders" id="nav-orders">Orders</a>
+            <a href="/dashboard/{{ tenant_id }}/customers" id="nav-customers">Customers</a>
+            <a href="/dashboard/{{ tenant_id }}/conversations" id="nav-conversations">Conversations</a>
+            <a href="/dashboard/{{ tenant_id }}/crawl" id="nav-crawl">Crawl</a>
+            <a href="/dashboard/{{ tenant_id }}/settings" id="nav-settings">Settings</a>
+        </div>
+        {% endif %}
+        <div class="nav-right">
+            <span class="user-badge" id="user-email"></span>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <!-- Auth guard — runs before page content scripts -->
+    <script>
+    const token = localStorage.getItem('token');
+    if (!token && !window.location.pathname.includes('/login')) {
+        window.location.href = '/dashboard/login';
+    }
+    </script>
+
+    <main class="container" style="padding-top: 1.5rem;">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="container" style="padding-bottom: 1rem;">
+        <hr>
+        <p style="text-align:center;"><small>Zemest | AI Agents for Social Media Moderation</small></p>
+    </footer>
+
+    <script>
+    // XSS-safe HTML escaping helper — wrap any server-provided string
+    // before interpolating it into an innerHTML template literal.
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    // User info display
+    if (token) {
+        fetch('/api/auth/me', {headers: {'Authorization': 'Bearer ' + token}})
+            .then(r => {
+                if (!r.ok) { localStorage.removeItem('token'); window.location.href = '/dashboard/login'; return; }
+                return r.json();
+            })
+            .then(u => { if (u) document.getElementById('user-email').textContent = u.email; })
+            .catch(() => {});
+    }
+    function logout() {
+        localStorage.removeItem('token');
+        window.location.href = '/dashboard/login';
+    }
+    // Highlight active nav link
+    document.querySelectorAll('.nav-links a').forEach(a => {
+        if (window.location.pathname === new URL(a.href, location.origin).pathname) a.classList.add('active');
+    });
+    </script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Zemest</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        body { background: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .login-card { max-width: 420px; width: 100%; }
+        .login-header { text-align: center; margin-bottom: 1.5rem; }
+        .login-header h1 { margin: 0; font-size: 1.5rem; }
+        .login-header p { color: #64748b; font-size: 0.9rem; margin: 0.3rem 0 0; }
+        .alert { padding: 0.7rem 1rem; border-radius: 0.4rem; margin-bottom: 1rem; font-size: 0.9rem; }
+        .alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+        .alert-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    </style>
+</head>
+<body>
+    <article class="login-card">
+        <div class="login-header">
+            <h1>Zemest</h1>
+            <p>AI-powered sales chatbot for your business</p>
+        </div>
+
+        <div id="error-msg" class="alert alert-error" style="display:none;"></div>
+        <div id="success-msg" class="alert alert-success" style="display:none;"></div>
+
+        <form id="auth-form">
+            <div id="name-field">
+                <label for="name">Name</label>
+                <input type="text" id="name" placeholder="Your name">
+            </div>
+
+            <label for="email">Email</label>
+            <input type="email" id="email" required placeholder="you@example.com" value="admin@zemest.ai">
+
+            <label for="password">Password</label>
+            <input type="password" id="password" required placeholder="Password" value="test123">
+
+            <div class="grid">
+                <button type="submit" id="login-btn">Login</button>
+                <button type="button" id="register-btn" class="secondary">Register</button>
+            </div>
+        </form>
+
+        <hr>
+        <details>
+            <summary><small>Demo credentials</small></summary>
+            <p><small><strong>Email:</strong> admin@zemest.ai | <strong>Password:</strong> test123</small></p>
+        </details>
+    </article>
+
+    <script>
+    // If already logged in, go to dashboard
+    const existingToken = localStorage.getItem('token');
+    if (existingToken) {
+        fetch('/api/auth/me', {headers: {'Authorization': 'Bearer ' + existingToken}})
+            .then(r => { if (r.ok) window.location.href = '/dashboard'; else localStorage.removeItem('token'); })
+            .catch(() => localStorage.removeItem('token'));
+    }
+
+    const errorEl = document.getElementById('error-msg');
+    const successEl = document.getElementById('success-msg');
+
+    function showError(msg) { errorEl.textContent = msg; errorEl.style.display = 'block'; successEl.style.display = 'none'; }
+    function showSuccess(msg) { successEl.textContent = msg; successEl.style.display = 'block'; errorEl.style.display = 'none'; }
+
+    document.getElementById('auth-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        errorEl.style.display = 'none';
+
+        try {
+            const resp = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, password})
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                localStorage.setItem('token', data.access_token);
+                showSuccess('Login successful! Redirecting...');
+                setTimeout(() => window.location.href = '/dashboard', 500);
+            } else {
+                showError(data.detail || 'Login failed. Check your credentials.');
+            }
+        } catch(e) {
+            showError('Network error. Is the server running?');
+        }
+    });
+
+    document.getElementById('register-btn').addEventListener('click', async () => {
+        const name = document.getElementById('name').value;
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+
+        if (!name) { showError('Name is required for registration'); return; }
+        if (!email) { showError('Email is required'); return; }
+        if (!password || password.length < 4) { showError('Password must be at least 4 characters'); return; }
+
+        try {
+            const resp = await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, email, password})
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                localStorage.setItem('token', data.access_token);
+                showSuccess('Account created! Redirecting...');
+                setTimeout(() => window.location.href = '/dashboard', 500);
+            } else {
+                showError(data.detail || 'Registration failed.');
+            }
+        } catch(e) {
+            showError('Network error. Is the server running?');
+        }
+    });
+    </script>
+</body>
+</html>

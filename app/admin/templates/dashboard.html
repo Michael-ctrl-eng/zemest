@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zemest Admin Dashboard</title>
+
+  <!-- Leaflet for the geo map -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --panel-2: #334155;
+      --text: #e2e8f0;
+      --text-dim: #94a3b8;
+      --accent: #3b82f6;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 16px 24px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--panel-2);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    header nav a {
+      color: var(--text-dim);
+      text-decoration: none;
+      margin-left: 16px;
+      font-size: 14px;
+    }
+    header nav a:hover { color: var(--text); }
+    main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--panel);
+      border: 1px solid var(--panel-2);
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .stat-card .label {
+      color: var(--text-dim);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .stat-card .value {
+      font-size: 32px;
+      font-weight: 600;
+      margin-top: 6px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-2);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    .panel h2 {
+      margin: 0 0 16px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--panel-2);
+    }
+    th { color: var(--text-dim); font-weight: 500; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .badge-blocked { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .badge-active { background: rgba(34,197,94,0.15); color: var(--success); }
+    #map {
+      height: 400px;
+      border-radius: 8px;
+      background: #0f172a;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .btn {
+      padding: 6px 12px;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid transparent;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .btn:hover { background: #475569; }
+    .btn-danger { background: var(--danger); }
+    .btn-danger:hover { background: #dc2626; }
+    .empty { color: var(--text-dim); padding: 12px; text-align: center; }
+    .pulse {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      margin-right: 6px;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🛡️ Zemest Admin Dashboard</h1>
+    <nav>
+      <a href="/_admin">SQLAdmin Panel</a>
+      <a href="/docs">API Docs</a>
+      <a href="/dashboard">Tenant Dashboard</a>
+      <a href="/_admin/logout">Logout</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Stat cards -->
+    <div class="grid">
+      <div class="stat-card">
+        <div class="label"><span class="pulse"></span>Active Users (Live)</div>
+        <div class="value" id="active-count">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Blocked Users</div>
+        <div class="value" id="blocked-count">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Active IP Bans</div>
+        <div class="value" id="bans-count">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Countries</div>
+        <div class="value" id="countries-count">—</div>
+      </div>
+    </div>
+
+    <!-- Geo map -->
+    <div class="panel">
+      <h2>Geographic Distribution</h2>
+      <div id="map"></div>
+    </div>
+
+    <!-- Recent blocks -->
+    <div class="panel">
+      <h2>Recently Blocked Users</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>User ID</th>
+            <th>Reason</th>
+            <th>Blocked At</th>
+            <th>Last IP</th>
+            <th>Country</th>
+          </tr>
+        </thead>
+        <tbody id="blocked-table">
+          <tr><td colspan="5" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Recent IP bans -->
+    <div class="panel">
+      <h2>Recent IP Bans</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>IP / CIDR</th>
+            <th>Reason</th>
+            <th>Created At</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="bans-table">
+          <tr><td colspan="4" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Audit log -->
+    <div class="panel">
+      <h2>Audit Log (Last 25 actions)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Admin</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>IP</th>
+          </tr>
+        </thead>
+        <tbody id="audit-table">
+          <tr><td colspan="5" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    // ---- Helpers --------------------------------------------------------
+    async function fetchJSON(url) {
+      const r = await fetch(url, { credentials: "include" });
+      if (!r.ok) throw new Error(`${url} -> ${r.status}`);
+      return r.json();
+    }
+    function fmtTime(s) {
+      if (!s) return "—";
+      const d = new Date(s);
+      return d.toLocaleString();
+    }
+    function escapeHtml(s) {
+      if (s == null) return "";
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    // ---- Map setup ------------------------------------------------------
+    const map = L.map("map", { worldCopyJump: true }).setView([20, 0], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "© OpenStreetMap",
+    }).addTo(map);
+
+    // ---- Loaders --------------------------------------------------------
+    async function loadActive() {
+      try {
+        const d = await fetchJSON("/api/admin/analytics/active-users");
+        document.getElementById("active-count").textContent = d.active_count;
+      } catch (e) {
+        document.getElementById("active-count").textContent = "—";
+      }
+    }
+
+    async function loadGeo() {
+      try {
+        const d = await fetchJSON("/api/admin/analytics/geo-distribution");
+        document.getElementById("countries-count").textContent =
+          d.distribution.length;
+
+        // Plot markers at country centroids (approximate). Uses lat/lon if
+        // we ever add per-country centroids; for now show a count overlay.
+        const summary = d.distribution.slice(0, 10).map(
+          (e) => `${e.country || "Unknown"}: ${e.user_count}`
+        ).join("<br>");
+        if (summary) {
+          L.popup()
+            .setLatLng([20, 0])
+            .setContent(`<div style="font-size:12px">${summary}</div>`)
+            .openOn(map);
+        }
+      } catch (e) {
+        document.getElementById("countries-count").textContent = "—";
+      }
+    }
+
+    async function loadBans() {
+      try {
+        const bans = await fetchJSON("/api/admin/ip-bans");
+        document.getElementById("bans-count").textContent = bans.length;
+        const tbody = document.getElementById("bans-table");
+        if (!bans.length) {
+          tbody.innerHTML = `<tr><td colspan="4" class="empty">No active bans</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = bans.slice(0, 10).map(b => `
+          <tr>
+            <td><code>${escapeHtml(b.ip_or_cidr)}</code></td>
+            <td>${escapeHtml(b.reason || "")}</td>
+            <td>${fmtTime(b.created_at)}</td>
+            <td class="actions">
+              <button class="btn btn-danger" onclick="removeBan('${b.id}')">Remove</button>
+            </td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        document.getElementById("bans-table").innerHTML =
+          `<tr><td colspan="4" class="empty">Failed to load</td></tr>`;
+      }
+    }
+
+    async function removeBan(id) {
+      if (!confirm("Remove this IP ban?")) return;
+      const r = await fetch(`/api/admin/ip-bans/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (r.ok) loadBans();
+      else alert("Failed to remove ban: " + r.status);
+    }
+
+    async function loadAudit() {
+      try {
+        const d = await fetchJSON("/api/admin/audit-log?page=1&page_size=25");
+        const tbody = document.getElementById("audit-table");
+        if (!d.items.length) {
+          tbody.innerHTML = `<tr><td colspan="5" class="empty">No audit entries yet</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = d.items.map(a => `
+          <tr>
+            <td>${fmtTime(a.created_at)}</td>
+            <td><code>${escapeHtml(a.admin_id)}</code></td>
+            <td><strong>${escapeHtml(a.action)}</strong></td>
+            <td>${escapeHtml(a.target_type || "")} ${escapeHtml(a.target_id || "")}</td>
+            <td>${escapeHtml(a.ip || "")}</td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        document.getElementById("audit-table").innerHTML =
+          `<tr><td colspan="5" class="empty">Failed to load</td></tr>`;
+      }
+    }
+
+    async function loadBlocked() {
+      // The blocked users list isn't a dedicated endpoint — fetch via audit
+      // log filter for "block_user" actions and show recent ones.
+      try {
+        const d = await fetchJSON("/api/admin/audit-log?page=1&page_size=10&action=block_user");
+        const tbody = document.getElementById("blocked-table");
+        document.getElementById("blocked-count").textContent = d.total;
+        if (!d.items.length) {
+          tbody.innerHTML = `<tr><td colspan="5" class="empty">No blocked users</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = d.items.map(a => {
+          const meta = a.metadata_ || {};
+          return `
+            <tr>
+              <td><code>${escapeHtml(a.target_id || "")}</code></td>
+              <td>${escapeHtml(meta.reason || "")}</td>
+              <td>${fmtTime(a.created_at)}</td>
+              <td>${escapeHtml(a.ip || "")}</td>
+              <td>—</td>
+            </tr>
+          `;
+        }).join("");
+      } catch (e) {
+        document.getElementById("blocked-table").innerHTML =
+          `<tr><td colspan="5" class="empty">Failed to load</td></tr>`;
+      }
+    }
+
+    // ---- Boot -----------------------------------------------------------
+    Promise.all([
+      loadActive(),
+      loadGeo(),
+      loadBans(),
+      loadAudit(),
+      loadBlocked(),
+    ]).catch(err => console.error("dashboard load error:", err));
+
+    // Refresh live counters every 30s
+    setInterval(loadActive, 30000);
+  </script>
+</body>
+</html>

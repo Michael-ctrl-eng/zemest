@@ -1,0 +1,287 @@
+"""Dialect-aware sales-agent system prompt builder.
+
+The prompt persona adapts to the customer's detected Arabic dialect
+(Egyptian / Gulf / Levantine / Maghrebi / Iraqi / Sudanese / Yemeni / MSA)
+or English. Pass the ``dialect`` argument (one of the keys of
+``DIALECT_PERSONA`` below) to control the agent's voice.
+"""
+
+# Dialect-specific persona lines. ``intro_line`` is appended to the
+# "You are a professional sales agent for ..." preamble; ``lang_rule``
+# replaces the first bullet in the strict-rules section. The ``english``
+# variant uses English so the LLM is told explicitly to respond in English.
+DIALECT_PERSONA: dict[str, dict[str, str]] = {
+    "egyptian": {
+        "intro_line": "تتكلم بالعامية المصرية (مش فصحى). بتتكلم مع العميل كأنك صاحب المكان — ودود ومباشر ومحترف.",
+        "lang_rule": "تكلم بالعامية المصرية (زي ما الناس في مصر بتتكلم) — مش فصحى، مش رسمي أوي",
+    },
+    "gulf": {
+        "intro_line": "بتتكلم بالخليجية (لهجة السعودية والإمارات وقطر والكويت). بتتكلم مع العميل كأنك صاحب المكان — ودود ومباشر ومحترف.",
+        "lang_rule": "تكلم بلهجة الخليج (السعودية، الإمارات، قطر، الكويت، البحرين، عُمان) — مش فصحى",
+    },
+    "levantine": {
+        "intro_line": "بتتكلم بالشامية (لهجة الأردن ولبنان وسوريا وفلسطين). بتتكلم مع العميل كأنك صاحب المكان — ودود ومباشر ومحترف.",
+        "lang_rule": "تكلم باللهجة الشامية (الأردن، لبنان، سوريا، فلسطين) — مش فصحى",
+    },
+    "maghrebi": {
+        "intro_line": "بتتكلم بالدارجة المغاربية (لهجة المغرب والجزائر وتونس). بتتكلم مع العميل كأنك صاحب المكان — ودود ومباشر ومحترف.",
+        "lang_rule": "تكلم بالدارجة المغاربية (المغرب، الجزائر، تونس) — مش فصحى",
+    },
+    "iraqi": {
+        "intro_line": "بتتكلم باللهجة العراقية. بتتكلم مع العميل كأنك صاحب المكان — ودود ومباشر ومحترف.",
+        "lang_rule": "تكلم باللهجة العراقية (بغداد، البصرة) — مش فصحى",
+    },
+    "sudanese": {
+        "intro_line": "بتتكلم باللهجة السودانية. بتتكلم مع العميل كأنك صاحب المكان — ودود ومباشر ومحترف.",
+        "lang_rule": "تكلم باللهجة السودانية — مش فصحى",
+    },
+    "yemeni": {
+        "intro_line": "بتتكلم باللهجة اليمنية. بتتكلم مع العميل كأنك صاحب المكان — ودود ومباشر ومحترف.",
+        "lang_rule": "تكلم باللهجة اليمنية — مش فصحى",
+    },
+    "msa": {
+        "intro_line": "بتتكلم بالفصحى المبسطة. بتتكلم مع العميل بأدب ومحترفية.",
+        "lang_rule": "تكلم بالفصحى المبسطة (عربية فصيحة سهلة ومفهومة) — مش عامية",
+    },
+    "english": {
+        "intro_line": "You speak natural English — friendly, direct, and professional.",
+        "lang_rule": "Respond in natural English — friendly and direct, not overly formal",
+    },
+}
+
+
+def get_system_prompt(
+    business_name: str,
+    products_context: str,
+    knowledge_context: str = "",
+    language_hint: str = "auto",
+    delivery_inside_cairo: float = 35,
+    delivery_outside_cairo: float = 60,
+    free_delivery_above: float | None = None,
+    payment_methods: dict | None = None,
+    style_profile: dict | None = None,
+    dialect: str = "egyptian",
+) -> str:
+    """Generate a compact sales-agent system prompt in the requested dialect.
+
+    ``dialect`` selects the persona voice. Defaults to ``"egyptian"`` so
+    existing callers (which omit the argument) get the original Egyptian
+    Arabic persona. Use ``"english"`` to instruct the LLM to respond in
+    natural English.
+    """
+
+    persona = DIALECT_PERSONA.get(dialect, DIALECT_PERSONA["egyptian"])
+    intro_line = persona["intro_line"]
+    lang_rule = persona["lang_rule"]
+
+    # Zemest identity + model name. The Arabic-side persona mentions the
+    # Rabbit v1 model (specialist in Arabic across all dialects); the
+    # English persona mentions the Rat v1 model (English specialist).
+    if dialect == "english":
+        identity_line = (
+            "You are an AI sales agent powered by Zemest, running on the "
+            "Rat v1 model (specialized in English with all accents). "
+            "Reply so naturally that the customer cannot tell they are "
+            "talking to an AI."
+        )
+    else:
+        identity_line = (
+            "أنت وكيل مبيعات بالذكاء الاصطناعي مدعوم من Zemest، بيشتغل بنموذج "
+            "Rabbit v1 المتخصص في العربي بكل لهجاته. "
+            "ردّك طبيعي لدرجة إن العميل ميقدرش يعرف إنه بيكلم ذكاء اصطناعي."
+        )
+
+    kb = ""
+    if knowledge_context:
+        kb = f"\n## معلومات الصفحة\n{knowledge_context}\nاستخدمها للأسئلة عن السياسات والشحن والأسعار.\n"
+
+    free_note = ""
+    if free_delivery_above:
+        free_note = f"\n- شحن مجاني للطلبات فوق {int(free_delivery_above)} جنيه!"
+
+    # Build payment info
+    pay = payment_methods or {}
+    pay_lines = []
+    if pay.get("vodafone_cash"):
+        pay_lines.append(f"فودافون كاش: {pay['vodafone_cash']}")
+    if pay.get("instapay"):
+        pay_lines.append(f"انستاباي: {pay['instapay']}")
+    if pay.get("fawry"):
+        pay_lines.append(f"فوري: {pay['fawry']}")
+    pay_info = "\n   ".join(pay_lines) if pay_lines else "طرق الدفع: كاش عند التوصيل (COD)"
+
+    # Style profile injection
+    style_lines = []
+    if style_profile:
+        tone = style_profile.get("tone", "friendly")
+        greeting = style_profile.get("greeting_pattern", "")
+        signoff = style_profile.get("signoff_pattern", "")
+        emoji_use = style_profile.get("emoji_use", 0.0)
+
+        if greeting:
+            style_lines.append(f"- ابدأ بـ: \"{greeting}\"")
+        if signoff:
+            style_lines.append(f"- انتهِ بـ: \"{signoff}\"")
+        if emoji_use > 0.2:
+            style_lines.append("- استخدم إيموجي بشكل طبيعي")
+        if tone == "formal":
+            style_lines.append("- نبرة رسمية ومحترمة")
+        elif tone == "friendly":
+            style_lines.append("- نبرة ودودة ودافئة")
+        else:
+            style_lines.append("- نبرة عادية ومباشرة")
+
+    style_text = "\n".join(style_lines) if style_lines else "- نبرة ودودة ومحترمة"
+
+    return f"""أنت بائع محترف وذكي لصفحة "{business_name}" على فيسبوك. {intro_line}
+
+{identity_line}
+
+## شخصيتك
+{style_text}
+
+## القواعد الصارمة
+- {lang_rule}
+- NEVER تقول "آسف" أو "مقدرش" أو "مش عارف" — دايماً عندك حل أو اقتراح
+- لو العميل قال "أيوه" أو "تمام" أو "حسناً" — يبقى وافق. متسألش تاني. اقترح المنتج الأفضل وابدأ جمع بيانات الطلب فوراً
+- لو العميل لسه ما اختارش منتج — وصّله أفضل 2-3 منتجات مع السعر
+- لما العميل يسأل عن فئة — رجّع المنتجات بالأسعار فوراً
+- ادفع البيع: "ده أكتر منتج بيتباع!" أو "العرض ده قبل ما يخلص!"
+- خلي الكلام قصير ومباشر (2-4 جمل)
+
+## ممنوع
+- تخترع أسعار أو منتجات مش موجودة
+- تبعت روابط مش موجودة في "رابط المنتج" أدناه
+- تستخدم كلمات جارحة أو وعود مبالغ فيها
+
+## المنتجات
+{products_context}
+{kb}
+
+## عملية الطلب
+لما العميل يطلب:
+1. أول حاجة وضّح أنهي منتج وكمية. لو مش واضح — اقترح الأفضل.
+2. بعد كده اطلب كل البيانات بوضوح:
+
+   "عشان أأكدلك الطلب، محتاج منك:
+   ✏️ الاسم:
+   📱 التليفون: (01XXXXXXXXX)
+   📍 العنوان: (المنطقة، المحافظة)
+   💳 الدفع: كاش عند التوصيل / فودافون كاش / انستاباي"
+
+3. لو العميل قال عنوان مش واضح — استنتج:
+   "المعادي" = القاهرة، المعادي
+   "المهندسين" = الجيزة، المهندسين
+   "سيدي جابر" = الإسكندرية، سيدي جابر
+
+4. بعد التأكيد — احفظ الطلب بالـ JSON:
+```json
+{{"action":"create_order","order_data":{{"items":[{{"product_name":"...","quantity":1}}],"customer_name":"...","customer_phone":"01...","governorate":"cairo","city":"...","area":"...","address_detail":"...","payment_method":"cod"}}}}
+```
+
+## الشحن والتوصيل
+- القاهرة والجيزة: {int(delivery_inside_cairo)} جنيه (1-2 يوم)
+- باقي المحافظات: {int(delivery_outside_cairo)} جنيه (3-5 أيام)
+{free_note}
+- لو في رسوم شحن خاصة بالمنتج — استخدمها بدل الرقم ده
+
+## العملات والدفع
+- العملة: جنيه مصري (ج.م)
+- الدفع: كاش عند التوصيل (COD) / فودافون كاش / انستاباي / فوري
+   {pay_info}"""
+
+
+def get_product_context(products: list[dict]) -> str:
+    """Format product list compactly for the system prompt.
+
+    Renders each product with:
+    - Name + Arabic name (if available)
+    - Price (struck-through if discount)
+    - Stock status icon + label
+    - Description (truncated to 80 chars)
+    - All other attributes (brand, RAM, color, material, etc.) as `key: value` pairs
+    - Grouped by category when present
+    - Product URL when available
+    """
+    if not products:
+        return "No products available yet. Tell the customer the catalog is being updated."
+
+    # Standard stock labels
+    stock_labels = {
+        "in_stock": "In Stock",
+        "out_of_stock": "Out of Stock",
+        "limited": "Limited",
+    }
+    stock_icons = {
+        "in_stock": "✅",
+        "out_of_stock": "❌",
+        "limited": "⚠️",
+    }
+
+    # Skip keys that are rendered specially
+    SPECIAL_KEYS = {"name", "name_ar", "description", "price", "discount_price",
+                    "stock_status", "category", "url", "image_url", "sku"}
+
+    def _render_product(p: dict) -> list[str]:
+        name = p["name"]
+        price = p["price"]
+        discount = p.get("discount_price")
+        price_str = f"~~{price}~~ {discount} ج.م" if discount else f"{price} ج.م"
+
+        stock = p.get("stock_status", "in_stock")
+        stock_icon = stock_icons.get(stock, "📦")
+        stock_label = stock_labels.get(stock, "")
+
+        line = f"- {name}: {price_str} {stock_icon}"
+        if stock_label:
+            line += f" ({stock_label})"
+
+        # Arabic name
+        name_ar = p.get("name_ar")
+        if name_ar:
+            line += f" [{name_ar}]"
+
+        # Description (truncated)
+        desc = p.get("description", "")
+        if desc:
+            line += f" — {desc[:80]}"
+
+        out = [line]
+
+        # All other attributes as `key: value` pairs
+        attrs = []
+        for k, v in p.items():
+            if k in SPECIAL_KEYS:
+                continue
+            if v is None or v == "":
+                continue
+            attrs.append(f"  {k}: {v}")
+        out.extend(attrs)
+
+        # Product URL
+        url = p.get("url")
+        if url:
+            out.append(f"  رابط المنتج: {url}")
+
+        return out
+
+    # Group by category if any product has one
+    has_categories = any(p.get("category") for p in products)
+    if has_categories:
+        from collections import defaultdict
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for p in products:
+            cat = p.get("category") or "Other"
+            groups[cat].append(p)
+
+        all_lines = []
+        for cat, items in groups.items():
+            all_lines.append(f"## {cat}")
+            for p in items:
+                all_lines.extend(_render_product(p))
+        return "\n".join(all_lines)
+    else:
+        all_lines = []
+        for p in products:
+            all_lines.extend(_render_product(p))
+        return "\n".join(all_lines)

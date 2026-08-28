@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Test Chat - Zemest{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+    .chat-container { max-height: 60vh; background: #fff; border: 1px solid #e2e8f0; }
+    .assistant .chat-bubble { white-space: normal; }
+    .assistant .chat-bubble ol, .assistant .chat-bubble ul {
+        display: block; margin: 0.4rem 0; padding-left: 1.5rem; list-style-position: outside;
+    }
+    .assistant .chat-bubble ol { list-style-type: decimal; }
+    .assistant .chat-bubble ul { list-style-type: disc; }
+    .assistant .chat-bubble li { display: list-item; margin: 0.2rem 0; }
+    .assistant .chat-bubble p { margin: 0.3rem 0; }
+    .assistant .chat-bubble br { display: block; margin: 0.2rem 0; }
+    .chat-meta { font-size: 0.7rem; color: #94a3b8; margin-top: 0.3rem; }
+    .customer .chat-meta { text-align: right; }
+    .assistant .chat-meta { text-align: left; }
+    .chat-input-row { display: flex; gap: 0.5rem; align-items: center; }
+    .chat-input-row input { flex: 1; margin: 0; }
+    .chat-input-row button { width: auto; margin: 0; background: #1e40af; }
+    .chat-actions { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+    .chat-actions button { font-size: 0.8rem; padding: 0.2rem 0.6rem; }
+    #session-tokens { font-size: 0.8rem; color: #64748b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="section-header">
+    <h2>Test Chat</h2>
+    <div style="display:flex; gap:1rem; align-items:center;">
+        <span id="session-tokens">Tokens: 0</span>
+        <button class="outline secondary" style="padding:0.3rem 0.8rem; width:auto;" onclick="clearChat()">Clear Chat</button>
+    </div>
+</div>
+<p style="margin-bottom:0.5rem;"><small>Simulate customer conversations. Type in Egyptian Arabic or English.</small></p>
+
+<div class="chat-actions">
+    <button class="outline" style="padding:0.2rem 0.6rem; font-size:0.8rem;" onclick="sendQuick('معاك عسل؟')">معاك عسل؟</button>
+    <button class="outline" style="padding:0.2rem 0.6rem; font-size:0.8rem;" onclick="sendQuick('المنتجات عندك إيه؟')">المنتجات عندك إيه؟</button>
+    <button class="outline" style="padding:0.2rem 0.6rem; font-size:0.8rem;" onclick="sendQuick('عايز أطلب')">عايز أطلب</button>
+    <button class="outline" style="padding:0.2rem 0.6rem; font-size:0.8rem;" onclick="sendQuick('التوصيل بكام؟')">التوصيل بكام؟</button>
+</div>
+
+<div class="chat-container" id="chat-box">
+    <div class="chat-message assistant">
+        <div class="chat-bubble">السلام عليكم! ازيك؟ إزاي أقدر أساعدك النهاردة؟</div>
+    </div>
+</div>
+
+<form id="chat-form" class="chat-input-row">
+    <input type="text" id="message-input" placeholder="Type a message... (Egyptian Arabic or English)" autofocus>
+    <button type="submit">Send</button>
+</form>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const tenantId = '{{ tenant_id }}';
+const chatBox = document.getElementById('chat-box');
+const form = document.getElementById('chat-form');
+const input = document.getElementById('message-input');
+let sessionTokens = 0;
+
+function addMessage(text, role, tokens) {
+    const div = document.createElement('div');
+    div.className = `chat-message ${role}`;
+
+    if (role === 'assistant') {
+        const html = marked.parse(text);
+        div.innerHTML = `
+            <div class="chat-bubble">${html}</div>
+            ${tokens ? `<div class="chat-meta">${tokens} tokens</div>` : ''}
+        `;
+    } else {
+        div.innerHTML = `<div class="chat-bubble">${text}</div>`;
+    }
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function sendQuick(msg) {
+    input.value = msg;
+    form.dispatchEvent(new Event('submit'));
+}
+
+function clearChat() {
+    chatBox.innerHTML = `
+        <div class="chat-message assistant">
+            <div class="chat-bubble">السلام عليكم! ازيك؟ إزاي أقدر أساعدك النهاردة؟</div>
+        </div>`;
+    sessionTokens = 0;
+    document.getElementById('session-tokens').textContent = 'Tokens: 0';
+}
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    addMessage(msg, 'customer');
+    input.value = '';
+    input.disabled = true;
+
+    // Typing indicator
+    const typingDiv = document.createElement('div');
+    typingDiv.className = 'chat-message assistant';
+    typingDiv.id = 'typing';
+    typingDiv.innerHTML = '<div class="chat-bubble" aria-busy="true">Thinking...</div>';
+    chatBox.appendChild(typingDiv);
+    chatBox.scrollTop = chatBox.scrollHeight;
+
+    try {
+        const resp = await fetch('/api/test/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`},
+            body: JSON.stringify({tenant_id: tenantId, message: msg, customer_name: 'Test Customer'})
+        });
+        const data = await resp.json();
+        document.getElementById('typing')?.remove();
+
+        if (resp.ok) {
+            const tokens = data.tokens_used || 0;
+            sessionTokens += tokens;
+            document.getElementById('session-tokens').textContent = `Tokens: ${sessionTokens.toLocaleString()}`;
+            addMessage(data.reply, 'assistant', tokens);
+        } else {
+            addMessage(`Error: ${data.detail || 'Failed to get response'}`, 'assistant');
+        }
+    } catch(e) {
+        document.getElementById('typing')?.remove();
+        addMessage('Network error. Please check your connection.', 'assistant');
+    }
+
+    input.disabled = false;
+    input.focus();
+});
+</script>
+{% endblock %}
