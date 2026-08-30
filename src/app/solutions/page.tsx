@@ -7,7 +7,7 @@ import { MessageCircle, Instagram, Facebook, Boxes, Globe, ShoppingCart, ArrowUp
 export const metadata = { title: "Solutions — Zemest" };
 
 const solutions = [
-  { icon: MessageCircle, label: "WHATSAPP AGENT", title: "Replies like the buyer is talking to you", desc: "Trained on every WhatsApp chat you've ever had. Reads text, voice, images. Checks inventory. Closes the sale.", stat: "3.2× reply rate", href: "/solutions/whatsapp" },
+  { icon: MessageCircle, label: "WHATSAPP AGENT", title: "Replies like the buyer is talking to you", desc: "Reads text, voice, images. Checks inventory. Closes the sale.", stat: "3.2× reply rate", href: "/solutions/whatsapp" },
   { icon: Instagram, label: "INSTAGRAM AGENT", title: "Closes sales in the DMs while you sleep", desc: "From story replies to product inquiries — every DM answered, in Arabic or English, in your tone.", stat: "+47% DM→sale", href: "/solutions/instagram" },
   { icon: Facebook, label: "MESSENGER AGENT", title: "Every comment, every message, answered instantly", desc: "The agent reads images, listens to voice, responds in the dialect your customers actually use.", stat: "+38% CSAT", href: "/solutions/messenger" },
   { icon: ShoppingCart, label: "INVENTORY AGENT", title: "Knows what's in stock before you do", desc: "A buyer asks for size 42. The agent checks your inventory live: 'Available, 2 left, 850 EGP. Want me to hold one?'", stat: "-41% lost sales", href: "/solutions/inventory" },

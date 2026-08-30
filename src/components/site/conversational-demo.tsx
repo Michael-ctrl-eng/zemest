@@ -50,7 +50,7 @@ export function ConversationalDemo() {
               <span className="serif-italic">an agent?</span>
             </h2>
             <p className="mt-6 text-base sm:text-lg text-[var(--tavus-hardware-gray-8)] leading-relaxed max-w-xl">
-              Trained on every chat you&apos;ve ever had. Replies in the same dialect, the same tone, the same shorthand. Reads text, listens to voice, looks at images — answers like you would, in &lt;3 seconds.
+              Replies in the same dialect, the same tone, the same shorthand. Reads text, listens to voice, looks at images — answers like you would, in &lt;3 seconds.
             </p>
 
             <ul className="mt-7 space-y-2.5">

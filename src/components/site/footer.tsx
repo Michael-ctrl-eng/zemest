@@ -111,7 +111,8 @@ export function Footer() {
           aria-hidden="true"
           width={1920}
           height={640}
-          loading="lazy"
+          loading="eager"
+          fetchPriority="low"
           decoding="async"
           className="absolute inset-0 w-full h-full object-cover"
         />

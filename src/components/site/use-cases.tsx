@@ -18,7 +18,7 @@ const cases = [
     tag: "WHATSAPP MODERATION",
     label: "WHATSAPP AGENT",
     title: "Replies like the buyer is talking to you",
-    desc: "Trained on every WhatsApp chat you've ever had, the agent answers product questions, checks inventory live, and replies in your exact tone — voice notes included.",
+    desc: "The agent answers product questions, checks inventory live, and replies in your exact tone — voice notes included.",
     image: "/zemest-card-whatsapp.avif",
     stat: { v: "3.2×", k: "reply rate" },
   },

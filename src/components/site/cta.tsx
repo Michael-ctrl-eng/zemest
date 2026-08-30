@@ -16,7 +16,8 @@ export function CTA() {
         aria-hidden="true"
         width={1920}
         height={1080}
-        loading="lazy"
+        loading="eager"
+        fetchPriority="low"
         decoding="async"
         className="absolute inset-0 w-full h-full object-cover"
       />
@@ -59,7 +60,7 @@ export function CTA() {
             </h2>
 
             <p className="mt-5 text-base sm:text-lg text-[var(--tavus-hardware-gray-8)] max-w-2xl mx-auto leading-relaxed">
-              Create an account, connect your WhatsApp / Facebook / Instagram, train your agent on your old chats, and ship your first reply before your coffee gets cold. No API, no developer setup — everything&apos;s on the Zemest platform.
+              Create an account, connect your WhatsApp / Facebook / Instagram, and ship your first reply before your coffee gets cold. No API, no developer setup — everything&apos;s on the Zemest platform.
             </p>
 
             <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3">

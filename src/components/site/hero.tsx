@@ -99,7 +99,7 @@ export function Hero() {
               Ready-made AI agents that <strong className="font-bold text-white">moderate</strong>{" "}
               your <strong className="font-bold text-white">WhatsApp</strong>,{" "}
               <strong className="font-bold text-white">Facebook</strong>, and{" "}
-              <strong className="font-bold text-white">Instagram</strong> chats — trained on your old conversations, replying like the buyer themselves. They read{" "}
+              <strong className="font-bold text-white">Instagram</strong> chats, replying like the buyer themselves. They read{" "}
               <span className="font-bold text-[var(--tavus-bubbletech-1)]">text</span>,{" "}
               <span className="font-bold text-[var(--tavus-bubbletech-1)]">voice</span>, and{" "}
               <span className="font-bold text-[var(--tavus-bubbletech-1)]">images</span>, check inventory, and close the sale.

@@ -131,8 +131,8 @@ function Navbar({ onLogout, loggingOut }: { onLogout: () => void; loggingOut: bo
       <div className="bg-[var(--tavus-bubbletech-1)] border-b-[3px] border-[var(--tavus-terminal-black)] py-2.5">
         <div className="mx-auto max-w-[1400px] px-4 flex items-center justify-center text-center">
           <p className="text-[13px] font-semibold text-[var(--tavus-terminal-black)]">
-            <span className="font-bold">Rabbit v1 is now live:</span> Arabic moderation with every accent — trained on
-            your chats.{" "}
+            <span className="font-bold">Rabbit v1 is now live:</span> Arabic moderation with every accent —
+            live on your channels.{" "}
             <Link href="/models" className="font-bold underline hover:no-underline">
               Learn more.
             </Link>

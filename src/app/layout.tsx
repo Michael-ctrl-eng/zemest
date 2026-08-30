@@ -26,7 +26,7 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Zemest — AI Moderation Agents",
   description:
-    "Ready-made AI moderation agents for WhatsApp, Facebook, and Instagram. Trained on your old chats. Rabbit v1 speaks Arabic with every accent. Rooster v1 speaks English with every accent. Understands voice, images, and text.",
+    "Ready-made AI moderation agents for WhatsApp, Facebook, and Instagram. Rabbit v1 speaks Arabic with every accent. Rooster v1 speaks English with every accent. Understands voice, images, and text.",
   keywords: [
     "Zemest",
     "AI moderation",
