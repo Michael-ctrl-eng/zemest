@@ -1,0 +1,54 @@
+🚀 Initializing Z-AI SDK...
+🔎 Searching images: "warehouse shelves with boxes and inventory"
+✅ Got 6 images
+{
+  "success": true,
+  "query": "warehouse shelves with boxes and inventory",
+  "count": 6,
+  "ranked": false,
+  "captioned_count": 0,
+  "results": [
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/71852aff342e.jpg",
+      "caption": "",
+      "source": "Apex Warehouse Systems",
+      "original_width": "2500px",
+      "original_height": "1666px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/952783d7cd2d.jpg",
+      "caption": "",
+      "source": "Avery",
+      "original_width": "2560px",
+      "original_height": "968px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/860d29a9d053.png",
+      "caption": "",
+      "source": "Traid Warehouse Compliance",
+      "original_width": "1344px",
+      "original_height": "768px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/f075e39b7cd2.jpg",
+      "caption": "",
+      "source": "Unsplash",
+      "original_width": "3000px",
+      "original_height": "2000px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/0044a5f91c02.jpg",
+      "caption": "",
+      "source": "Alamy",
+      "original_width": "1300px",
+      "original_height": "821px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/dd2ce1494679.jpeg",
+      "caption": "",
+      "source": "Pexels",
+      "original_width": "6000px",
+      "original_height": "4000px"
+    }
+  ]
+}

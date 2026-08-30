@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Conversations - Zemest{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="section-header">
+    <h2>Conversations</h2>
+    <a href="/dashboard/{{ tenant_id }}/chat" role="button" class="outline" style="padding:0.3rem 0.8rem;">+ New Test Chat</a>
+</div>
+
+<div id="conversations-container"></div>
+
+<dialog id="conv-modal">
+    <article style="min-width: 650px; max-height: 85vh;">
+        <header>
+            <div class="section-header">
+                <h3 id="conv-title"></h3>
+                <button class="outline secondary" style="padding:0.2rem 0.6rem;" onclick="document.getElementById('conv-modal').close()">Close</button>
+            </div>
+        </header>
+        <div class="chat-container" id="conv-messages" style="max-height: 50vh;"></div>
+    </article>
+</dialog>
+
+<script>
+const tenantId = '{{ tenant_id }}';
+const headers = {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`};
+
+async function loadConversations() {
+    const resp = await fetch(`/api/tenants/${tenantId}/conversations`, {headers});
+    const data = await resp.json();
+    const container = document.getElementById('conversations-container');
+
+    if (data.conversations.length === 0) {
+        container.innerHTML = '<article><p>No conversations yet. <a href="/dashboard/' + tenantId + '/chat">Start a test chat</a> to see conversations here.</p></article>';
+        return;
+    }
+
+    container.innerHTML = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Customer</th>
+                    <th>Status</th>
+                    <th>Messages</th>
+                    <th>Last Message</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.conversations.map(c => {
+                    const customerName = escapeHtml(c.customer_name || 'Customer');
+                    const status = escapeHtml(c.status);
+                    return `
+                    <tr>
+                        <td><strong>${customerName}</strong></td>
+                        <td><span class="badge badge-${status}">${status}</span></td>
+                        <td>${c.message_count || '-'}</td>
+                        <td style="font-size:0.85rem;">${new Date(c.last_message_at).toLocaleString('ar-EG')}</td>
+                        <td><button class="outline" style="padding:0.2rem 0.5rem;" onclick="showConv('${escapeHtml(c.id)}')">View</button></td>
+                    </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+        <small>Total: ${data.total || data.conversations.length} conversations</small>
+    `;
+}
+
+async function showConv(id) {
+    const resp = await fetch(`/api/tenants/${tenantId}/conversations/${id}`, {headers});
+    const data = await resp.json();
+    document.getElementById('conv-title').textContent = `Chat with ${data.customer_name || 'Customer'}`;
+    document.getElementById('conv-messages').innerHTML = data.messages.map(m => {
+        // Assistant content is rendered through marked (markdown) and comes from
+        // the trusted LLM. Customer content is user-provided and must be escaped
+        // before being placed into innerHTML.
+        const content = m.role === 'assistant' ? marked.parse(m.content) : escapeHtml(m.content);
+        const role = escapeHtml(m.role);
+        return `
+            <div class="chat-message ${role}">
+                <div>
+                    <div class="chat-bubble">${content}</div>
+                    <div style="font-size:0.65rem; color:#94a3b8; margin-top:2px; ${m.role === 'assistant' ? 'text-align:right' : ''}">${new Date(m.created_at).toLocaleTimeString('ar-EG')}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    document.getElementById('conv-modal').showModal();
+    setTimeout(() => {
+        const box = document.getElementById('conv-messages');
+        box.scrollTop = box.scrollHeight;
+    }, 100);
+}
+
+loadConversations();
+</script>
+{% endblock %}

@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+{% block title %}Products - Zemest{% endblock %}
+
+{% block content %}
+<div class="section-header">
+    <h2>Products</h2>
+    <div style="display:flex; gap:0.5rem;">
+        <button id="add-btn" class="outline" style="padding:0.3rem 0.8rem;">+ Add Product</button>
+        <button id="url-btn" style="padding:0.3rem 0.8rem;">Import from URL</button>
+        <button id="csv-btn" class="secondary" style="padding:0.3rem 0.8rem;">Upload CSV</button>
+        <a href="/dashboard/{{ tenant_id }}/crawl" role="button" class="outline" style="padding:0.3rem 0.8rem;">Crawl Website</a>
+    </div>
+</div>
+
+<!-- Import from URL Modal -->
+<dialog id="url-modal">
+    <article style="min-width: 500px;">
+        <header><h3>Import Product from URL</h3></header>
+        <p><small>Paste any product page link. The system will automatically extract the product name, price, description, stock status, and image.</small></p>
+        <form id="url-form">
+            <label>Product Page URL *</label>
+            <input type="url" id="import-url" required placeholder="https://example.com/products/my-product">
+            <div id="url-status" style="display:none; margin-bottom:1rem;"></div>
+            <footer>
+                <button type="button" class="secondary" onclick="document.getElementById('url-modal').close()">Cancel</button>
+                <button type="submit" id="url-submit-btn">Extract & Import</button>
+            </footer>
+        </form>
+    </article>
+</dialog>
+
+<!-- Add Product Modal — flexible fields -->
+<dialog id="add-modal">
+    <article style="min-width: 550px;">
+        <header><h3>Add Product</h3></header>
+        <form id="add-form">
+            <div class="grid">
+                <div>
+                    <label>Product Name *</label>
+                    <input type="text" name="name" required placeholder="e.g. Cotton Galabiya, Samsung A15, Chocolate Cake">
+                </div>
+                <div>
+                    <label>Price (EGP) *</label>
+                    <input type="number" name="price" required step="0.01" placeholder="e.g. 500">
+                </div>
+            </div>
+
+            <label>Description</label>
+            <textarea name="description" rows="2" placeholder="Product description (optional)"></textarea>
+
+            <hr>
+            <p><small>Add any custom attributes below (e.g. color, size, brand, weight, flavor, stock_status, sku, category...)</small></p>
+
+            <div id="custom-fields"></div>
+
+            <button type="button" class="outline" style="margin-bottom: 1rem;" onclick="addField()">+ Add Attribute</button>
+
+            <footer>
+                <button type="button" class="secondary" onclick="document.getElementById('add-modal').close()">Cancel</button>
+                <button type="submit">Save Product</button>
+            </footer>
+        </form>
+    </article>
+</dialog>
+
+<!-- CSV Upload Modal -->
+<dialog id="csv-modal">
+    <article>
+        <header><h3>Upload CSV</h3></header>
+        <p>Upload ANY CSV format. The system auto-detects columns:</p>
+        <ul>
+            <li><strong>Required:</strong> a name column (<code>name</code>, <code>product_name</code>, <code>title</code>, or <code>item</code>)</li>
+            <li><strong>Required:</strong> a price column (<code>price</code>, <code>cost</code>, <code>amount</code>, or <code>rate</code>)</li>
+            <li><strong>Optional:</strong> ALL other columns are stored as product attributes automatically</li>
+        </ul>
+        <form id="csv-form" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".csv" required>
+            <footer>
+                <button type="button" class="secondary" onclick="document.getElementById('csv-modal').close()">Cancel</button>
+                <button type="submit">Upload</button>
+            </footer>
+        </form>
+        <div id="csv-result" style="display:none;"></div>
+    </article>
+</dialog>
+
+<!-- Edit Product Modal -->
+<dialog id="edit-modal">
+    <article style="min-width: 550px;">
+        <header><h3>Edit Product</h3></header>
+        <form id="edit-form">
+            <input type="hidden" id="edit-id">
+            <div class="grid">
+                <div>
+                    <label>Product Name *</label>
+                    <input type="text" id="edit-name" required>
+                </div>
+                <div>
+                    <label>Price (EGP) *</label>
+                    <input type="number" id="edit-price" required step="0.01">
+                </div>
+            </div>
+            <div class="grid">
+                <div>
+                    <label>Stock Status</label>
+                    <select id="edit-stock">
+                        <option value="in_stock">In Stock</option>
+                        <option value="out_of_stock">Out of Stock</option>
+                        <option value="limited">Limited Stock</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Category</label>
+                    <input type="text" id="edit-category" placeholder="e.g. Honey, Galabiya">
+                </div>
+            </div>
+            <label>Description</label>
+            <textarea id="edit-description" rows="2"></textarea>
+
+            <div id="edit-attrs"></div>
+            <button type="button" class="outline" style="margin-bottom:1rem;" onclick="addEditField()">+ Add Attribute</button>
+
+            <footer>
+                <button type="button" class="secondary" onclick="document.getElementById('edit-modal').close()">Cancel</button>
+                <button type="submit">Update Product</button>
+            </footer>
+        </form>
+    </article>
+</dialog>
+
+<input type="text" id="search-input" placeholder="Search products..." style="margin-bottom: 1rem;">
+<div id="products-table"></div>
+
+<script>
+const tenantId = '{{ tenant_id }}';
+const headers = {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`};
+
+document.getElementById('add-btn').onclick = () => document.getElementById('add-modal').showModal();
+document.getElementById('url-btn').onclick = () => document.getElementById('url-modal').showModal();
+document.getElementById('csv-btn').onclick = () => document.getElementById('csv-modal').showModal();
+
+// Import from URL
+document.getElementById('url-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = document.getElementById('import-url').value.trim();
+    const btn = document.getElementById('url-submit-btn');
+    const status = document.getElementById('url-status');
+
+    btn.disabled = true;
+    btn.textContent = 'Extracting...';
+    status.style.display = 'block';
+    status.innerHTML = '<small aria-busy="true">Crawling page and extracting product data...</small>';
+
+    try {
+        const resp = await fetch(`/api/tenants/${tenantId}/products/import-url`, {
+            method: 'POST', headers,
+            body: JSON.stringify({url})
+        });
+        const data = await resp.json();
+
+        if (resp.ok) {
+            status.innerHTML = `<div class="flash-success">
+                <strong>Imported:</strong> ${escapeHtml(data.name)} — ج.م${escapeHtml(data.price)}
+                ${data.attributes?.stock_status ? `[${escapeHtml(data.attributes.stock_status)}]` : ''}
+            </div>`;
+            loadProducts();
+            setTimeout(() => document.getElementById('url-modal').close(), 2000);
+        } else {
+            status.innerHTML = `<div class="flash-error">${escapeHtml(data.detail || 'Failed to extract product')}</div>`;
+        }
+    } catch(e) {
+        status.innerHTML = '<div class="flash-error">Network error</div>';
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Extract & Import';
+});
+
+let searchTimeout;
+document.getElementById('search-input').addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => loadProducts(e.target.value), 300);
+});
+
+function addField() {
+    const container = document.getElementById('custom-fields');
+    const div = document.createElement('div');
+    div.className = 'grid';
+    div.style.marginBottom = '0.5rem';
+    div.innerHTML = `
+        <input type="text" placeholder="Attribute name (e.g. color)" class="attr-key">
+        <input type="text" placeholder="Value (e.g. red)" class="attr-val">
+        <button type="button" class="outline secondary" style="padding:0.3rem 0.5rem; width: auto;" onclick="this.parentElement.remove()">x</button>
+    `;
+    container.appendChild(div);
+}
+
+async function loadProducts(search = '') {
+    const url = search
+        ? `/api/tenants/${tenantId}/products?search=${encodeURIComponent(search)}`
+        : `/api/tenants/${tenantId}/products`;
+    const resp = await fetch(url, {headers});
+    const data = await resp.json();
+    const container = document.getElementById('products-table');
+
+    if (data.products.length === 0) {
+        container.innerHTML = '<p>No products yet. Add products manually or upload a CSV.</p>';
+        return;
+    }
+
+    container.innerHTML = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Price</th>
+                    <th>Attributes</th>
+                    <th>Source</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.products.map(p => {
+                    const attrs = p.attributes || {};
+                    const nameAr = attrs.name_ar ? `<br><small>${escapeHtml(attrs.name_ar)}</small>` : '';
+                    const discount = attrs.discount_price ? `<br><s>ج.م${escapeHtml(attrs.discount_price)}</s>` : '';
+                    const stock = attrs.stock_status || 'in_stock';
+                    const stockSafe = escapeHtml(stock);
+                    const stockBadge = `<span class="badge badge-${stockSafe}">${stockSafe}</span>`;
+
+                    // Show all non-trivial attributes
+                    const skipKeys = new Set(['name_ar', 'discount_price', 'stock_status', 'description', 'image_url']);
+                    const displayAttrs = Object.entries(attrs)
+                        .filter(([k, v]) => !skipKeys.has(k) && v !== null && v !== '')
+                        .map(([k, v]) => `<small><strong>${escapeHtml(k)}:</strong> ${escapeHtml(v)}</small>`)
+                        .join('<br>');
+
+                    return `
+                        <tr>
+                            <td>${escapeHtml(p.name)}${nameAr}<br>${stockBadge}</td>
+                            <td>ج.م${escapeHtml(p.price)}${discount}</td>
+                            <td>${displayAttrs || '-'}</td>
+                            <td>${escapeHtml(p.source)}</td>
+                            <td style="white-space:nowrap;">
+                                <button class="outline" style="padding:0.2rem 0.5rem;" onclick="toggleStock('${escapeHtml(p.id)}', '${stockSafe}')">${stock === 'in_stock' ? '📦' : '❌'}</button>
+                                <button class="outline" style="padding:0.2rem 0.5rem;" onclick="editProduct('${escapeHtml(p.id)}')">Edit</button>
+                                <button class="outline secondary" style="padding:0.2rem 0.5rem;" onclick="deleteProduct('${escapeHtml(p.id)}')">Del</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+        <small>Total: ${data.total} products</small>
+    `;
+}
+
+document.getElementById('add-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    const body = {
+        name: formData.get('name'),
+        price: formData.get('price') || '0',
+    };
+
+    // Add description if present
+    const desc = formData.get('description');
+    if (desc) body.description = desc;
+
+    // Collect custom attributes
+    const keys = form.querySelectorAll('.attr-key');
+    const vals = form.querySelectorAll('.attr-val');
+    keys.forEach((keyEl, i) => {
+        const k = keyEl.value.trim();
+        const v = vals[i].value.trim();
+        if (k && v) body[k] = v;
+    });
+
+    const resp = await fetch(`/api/tenants/${tenantId}/products`, {
+        method: 'POST', headers, body: JSON.stringify(body)
+    });
+    if (resp.ok) {
+        document.getElementById('add-modal').close();
+        form.reset();
+        document.getElementById('custom-fields').innerHTML = '';
+        loadProducts();
+    } else {
+        const err = await resp.json();
+        alert(err.detail || 'Failed to create product');
+    }
+});
+
+document.getElementById('csv-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const resp = await fetch(`/api/tenants/${tenantId}/products/upload-csv`, {
+        method: 'POST',
+        headers: {'Authorization': `Bearer ${token}`},
+        body: formData
+    });
+    const data = await resp.json();
+    const detected = data.detected_columns || {};
+    document.getElementById('csv-result').style.display = 'block';
+    document.getElementById('csv-result').innerHTML = `
+        <p><strong>Imported:</strong> ${escapeHtml(data.imported)} | <strong>Skipped:</strong> ${escapeHtml(data.skipped)}</p>
+        ${detected.name_column ? `<p><small>Detected name column: <code>${escapeHtml(detected.name_column)}</code> | price column: <code>${escapeHtml(detected.price_column)}</code></small></p>` : ''}
+        ${detected.attribute_columns?.length ? `<p><small>Attributes: ${detected.attribute_columns.map(c => '<code>' + escapeHtml(c) + '</code>').join(', ')}</small></p>` : ''}
+        ${data.errors?.length ? '<details><summary>Errors</summary><pre>' + data.errors.map(e => escapeHtml(e)).join('\n') + '</pre></details>' : ''}
+    `;
+    loadProducts();
+});
+
+async function toggleStock(id, currentStock) {
+    const newStock = currentStock === 'in_stock' ? 'out_of_stock' : 'in_stock';
+    await fetch(`/api/tenants/${tenantId}/products/${id}`, {
+        method: 'PATCH', headers, body: JSON.stringify({stock_status: newStock})
+    });
+    loadProducts();
+}
+
+async function editProduct(id) {
+    const resp = await fetch(`/api/tenants/${tenantId}/products/${id}`, {headers});
+    const p = await resp.json();
+    const attrs = p.attributes || {};
+
+    document.getElementById('edit-id').value = id;
+    document.getElementById('edit-name').value = p.name;
+    document.getElementById('edit-price').value = p.price;
+    document.getElementById('edit-stock').value = attrs.stock_status || 'in_stock';
+    document.getElementById('edit-category').value = attrs.category || '';
+    document.getElementById('edit-description').value = attrs.description || '';
+
+    // Render extra attributes
+    const skip = new Set(['stock_status','category','description','name_ar','discount_price','image_url','url','sku','brand']);
+    const container = document.getElementById('edit-attrs');
+    container.innerHTML = '';
+    Object.entries(attrs).forEach(([k, v]) => {
+        if (!skip.has(k) && v !== null && v !== '') {
+            const div = document.createElement('div');
+            div.className = 'grid';
+            div.style.marginBottom = '0.5rem';
+            div.innerHTML = `
+                <input type="text" value="${escapeHtml(k)}" class="edit-attr-key">
+                <input type="text" value="${escapeHtml(v)}" class="edit-attr-val">
+                <button type="button" class="outline secondary" style="padding:0.3rem 0.5rem; width:auto;" onclick="this.parentElement.remove()">x</button>
+            `;
+            container.appendChild(div);
+        }
+    });
+
+    document.getElementById('edit-modal').showModal();
+}
+
+function addEditField() {
+    const container = document.getElementById('edit-attrs');
+    const div = document.createElement('div');
+    div.className = 'grid';
+    div.style.marginBottom = '0.5rem';
+    div.innerHTML = `
+        <input type="text" placeholder="Attribute name" class="edit-attr-key">
+        <input type="text" placeholder="Value" class="edit-attr-val">
+        <button type="button" class="outline secondary" style="padding:0.3rem 0.5rem; width:auto;" onclick="this.parentElement.remove()">x</button>
+    `;
+    container.appendChild(div);
+}
+
+document.getElementById('edit-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('edit-id').value;
+    const body = {
+        name: document.getElementById('edit-name').value,
+        price: document.getElementById('edit-price').value,
+        stock_status: document.getElementById('edit-stock').value,
+        category: document.getElementById('edit-category').value || undefined,
+        description: document.getElementById('edit-description').value || undefined,
+    };
+    // Collect extra attributes
+    const keys = document.querySelectorAll('.edit-attr-key');
+    const vals = document.querySelectorAll('.edit-attr-val');
+    keys.forEach((keyEl, i) => {
+        const k = keyEl.value.trim();
+        const v = vals[i].value.trim();
+        if (k && v) body[k] = v;
+    });
+
+    const resp = await fetch(`/api/tenants/${tenantId}/products/${id}`, {
+        method: 'PATCH', headers, body: JSON.stringify(body)
+    });
+    if (resp.ok) {
+        document.getElementById('edit-modal').close();
+        loadProducts();
+    } else {
+        const err = await resp.json();
+        alert(err.detail || 'Failed to update');
+    }
+});
+
+async function deleteProduct(id) {
+    if (!confirm('Delete this product?')) return;
+    await fetch(`/api/tenants/${tenantId}/products/${id}`, {method: 'DELETE', headers});
+    loadProducts();
+}
+
+loadProducts();
+</script>
+{% endblock %}

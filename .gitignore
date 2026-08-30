@@ -1,0 +1,96 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+local-*
+.claude
+.z-ai-config
+*.log
+dev.log
+dev.out.log
+test
+prompt
+
+server.log
+# Skills directory
+/skills/
+# --- Zemest merged-monorepo hygiene (public repo: keep it lean & secret-free) ---
+# secrets & local config — NEVER commit
+.env
+.env.*
+repos/*/.env
+repos/*/.env.*
+
+# python backend runtime
+repos/*/.venv/
+repos/*/**/__pycache__/
+*.pyc
+repos/*/test.db
+repos/*/backend.log
+repos/*/backend.pid
+
+# local databases (dev data with hashed credentials)
+db/
+*.db
+
+# QA / agent artifacts, not product code
+design-audit/
+tool-results/
+.agent-browser/
+.zscripts/
+agent-ctx/
+download/
+skills/
+
+# scraped design reference + generated downloads from the source repos
+repos/*/download/
+repos/zemest-platform/tavus-ref/
+repos/zemest-platform/.next/
+repos/zemest-platform/node_modules/
+
+# heavy raw uploads (keep the one source photo the build scripts use)
+upload/*
+!upload/1000015353.jpg
+
+# runtime logs
+dev.log
+*.log
+*.pid

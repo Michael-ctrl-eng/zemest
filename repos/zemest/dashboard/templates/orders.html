@@ -1,0 +1,437 @@
+{% extends "base.html" %}
+{% block title %}Orders - Zemest{% endblock %}
+
+{% block extra_head %}
+<style>
+    @media print {
+        .top-nav, footer, .section-header, #status-filter, .no-print { display: none !important; }
+        dialog { position: static !important; border: none !important; }
+        dialog article { box-shadow: none !important; min-width: auto !important; }
+    }
+    .order-items-list { margin-top: 0.5rem; }
+    .order-items-list .item-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+    .order-items-list .item-row input, .order-items-list .item-row select { margin: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="section-header">
+    <h2>Orders</h2>
+    <div style="display:flex; gap:0.5rem;">
+        <button onclick="document.getElementById('create-modal').showModal()" style="padding:0.3rem 0.8rem;">+ New Order</button>
+        <button class="outline" style="padding:0.3rem 0.8rem;" onclick="exportCSV()">Export CSV</button>
+    </div>
+</div>
+
+<div style="margin-bottom: 1rem;">
+    <select id="status-filter" style="width: auto; display: inline-block;">
+        <option value="">All Orders</option>
+        <option value="pending">Pending</option>
+        <option value="confirmed">Confirmed</option>
+        <option value="shipped">Shipped</option>
+        <option value="delivered">Delivered</option>
+        <option value="cancelled">Cancelled</option>
+    </select>
+</div>
+
+<div id="orders-container"></div>
+
+<!-- Create Order Modal -->
+<dialog id="create-modal">
+    <article style="min-width: 650px; max-height: 85vh; overflow-y: auto;">
+        <header><h3>Create Order</h3></header>
+        <form id="create-order-form">
+            <h4>Customer</h4>
+            <div class="grid">
+                <div><label>Name *</label><input type="text" id="co-name" required></div>
+                <div><label>Phone *</label><input type="text" id="co-phone" required placeholder="01XXXXXXXXX"></div>
+            </div>
+            <div class="grid">
+                <div>
+                    <label>Governorate *</label>
+                    <select id="co-governorate" required><option value="">Select</option></select>
+                </div>
+                <div>
+                    <label>City *</label>
+                    <select id="co-city" required><option value="">Select</option></select>
+                </div>
+                <div>
+                    <label>Area</label>
+                    <select id="co-area"><option value="">Select</option></select>
+                </div>
+            </div>
+            <label>Full Address *</label>
+            <input type="text" id="co-address" required placeholder="Building, Street, Floor">
+
+            <h4>Items</h4>
+            <div id="order-items" class="order-items-list"></div>
+            <button type="button" class="outline" style="margin-bottom:1rem;" onclick="addOrderItem()">+ Add Item</button>
+
+            <div class="grid">
+                <div>
+                    <label>Delivery Charge (ج.م)</label>
+                    <input type="number" id="co-delivery" value="35" step="1">
+                </div>
+                <div>
+                    <label>Payment</label>
+                    <select id="co-payment">
+                        <option value="cod">Cash on Delivery</option>
+                        <option value="vodafone_cash">Vodafone Cash</option>
+                        <option value="instapay">InstaPay</option>
+                        <option value="fawry">Fawry</option>
+                        <option value="bank">Bank Transfer</option>
+                    </select>
+                </div>
+            </div>
+            <label>Notes</label>
+            <textarea id="co-notes" rows="2" placeholder="Internal notes (optional)"></textarea>
+
+            <footer>
+                <button type="button" class="secondary" onclick="document.getElementById('create-modal').close()">Cancel</button>
+                <button type="submit">Create Order</button>
+            </footer>
+        </form>
+    </article>
+</dialog>
+
+<!-- Order Detail Modal -->
+<dialog id="order-modal">
+    <article style="min-width: 600px; max-height: 85vh; overflow-y: auto;">
+        <header>
+            <div class="section-header">
+                <h3 id="order-title"></h3>
+                <div>
+                    <button class="outline" style="padding:0.2rem 0.6rem;" onclick="window.print()">Print</button>
+                    <button class="outline secondary" style="padding:0.2rem 0.6rem;" onclick="document.getElementById('order-modal').close()">Close</button>
+                </div>
+            </div>
+        </header>
+        <div id="order-detail"></div>
+        <h4>Notes</h4>
+        <textarea id="order-notes" rows="2" style="margin-bottom:0.5rem;"></textarea>
+        <button class="outline" style="padding:0.2rem 0.6rem;" onclick="saveNotes()">Save Notes</button>
+    </article>
+</dialog>
+
+<!-- Cancel Dialog -->
+<dialog id="cancel-modal">
+    <article style="min-width: 400px;">
+        <header><h3>Cancel Order</h3></header>
+        <input type="hidden" id="cancel-order-id">
+        <label>Reason for cancellation</label>
+        <textarea id="cancel-reason" rows="2" required placeholder="e.g. Customer changed mind, Out of stock"></textarea>
+        <footer>
+            <button class="secondary" onclick="document.getElementById('cancel-modal').close()">Back</button>
+            <button style="background:#dc3545;" onclick="confirmCancel()">Cancel Order</button>
+        </footer>
+    </article>
+</dialog>
+
+<script>
+const tenantId = '{{ tenant_id }}';
+const headers = {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`};
+let allOrders = [];
+let allProducts = [];
+let currentOrderId = null;
+
+document.getElementById('status-filter').addEventListener('change', loadOrders);
+
+// Load Egyptian address cascading
+async function loadGovernorates() {
+    const resp = await fetch('/api/address/governorates');
+    const govs = await resp.json();
+    const sel = document.getElementById('co-governorate');
+    sel.innerHTML = '<option value="">Select Governorate</option>' + govs.map(g => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name_en)} — ${escapeHtml(g.name_ar)}</option>`).join('');
+}
+document.getElementById('co-governorate').addEventListener('change', async () => {
+    const gov = document.getElementById('co-governorate').value;
+    if (!gov) return;
+    const resp = await fetch(`/api/address/cities?governorate=${encodeURIComponent(gov)}`);
+    const cities = await resp.json();
+    document.getElementById('co-city').innerHTML = '<option value="">Select City</option>' + cities.map(c => `<option>${escapeHtml(c)}</option>`).join('');
+    document.getElementById('co-area').innerHTML = '<option value="">Select</option>';
+});
+document.getElementById('co-city').addEventListener('change', async () => {
+    const gov = document.getElementById('co-governorate').value;
+    const city = document.getElementById('co-city').value;
+    if (!gov || !city) return;
+    const resp = await fetch(`/api/address/areas?governorate=${encodeURIComponent(gov)}`);
+    const areas = await resp.json();
+    document.getElementById('co-area').innerHTML = '<option value="">Select</option>' + areas.map(a => `<option>${escapeHtml(a)}</option>`).join('');
+});
+
+// Load products for item selector
+async function loadProductsForSelect() {
+    const resp = await fetch(`/api/tenants/${tenantId}/products?page_size=200`, {headers});
+    const data = await resp.json();
+    allProducts = data.products;
+}
+
+function addOrderItem() {
+    const container = document.getElementById('order-items');
+    const div = document.createElement('div');
+    div.className = 'item-row';
+    div.innerHTML = `
+        <select class="oi-product" style="flex:2;" onchange="onProductSelect(this)">
+            <option value="">Select product</option>
+            ${allProducts.map(p => `<option value="${escapeHtml(p.name)}" data-price="${escapeHtml(p.price)}">${escapeHtml(p.name)} (ج.م${escapeHtml(p.price)})</option>`).join('')}
+            <option value="__custom">Custom item...</option>
+        </select>
+        <input type="text" class="oi-name" placeholder="Product name" style="flex:2; display:none;">
+        <input type="number" class="oi-qty" value="1" min="1" style="flex:0.5;" placeholder="Qty">
+        <input type="number" class="oi-price" step="0.01" style="flex:1;" placeholder="Price">
+        <button type="button" class="outline secondary" style="padding:0.3rem; width:auto;" onclick="this.parentElement.remove()">x</button>
+    `;
+    container.appendChild(div);
+}
+
+function onProductSelect(sel) {
+    const row = sel.parentElement;
+    const nameInput = row.querySelector('.oi-name');
+    const priceInput = row.querySelector('.oi-price');
+    if (sel.value === '__custom') {
+        nameInput.style.display = '';
+        nameInput.required = true;
+        priceInput.value = '';
+    } else {
+        nameInput.style.display = 'none';
+        nameInput.required = false;
+        const opt = sel.selectedOptions[0];
+        priceInput.value = opt?.dataset.price || '';
+    }
+}
+
+document.getElementById('create-order-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const items = [];
+    document.querySelectorAll('.item-row').forEach(row => {
+        const sel = row.querySelector('.oi-product');
+        const name = sel.value === '__custom' ? row.querySelector('.oi-name').value : sel.value;
+        const qty = parseInt(row.querySelector('.oi-qty').value) || 1;
+        const price = parseFloat(row.querySelector('.oi-price').value) || 0;
+        if (name && price > 0) items.push({product_name: name, quantity: qty, unit_price: price});
+    });
+    if (items.length === 0) { alert('Add at least one item'); return; }
+
+    const body = {
+        customer_name: document.getElementById('co-name').value,
+        customer_phone: document.getElementById('co-phone').value,
+        governorate: document.getElementById('co-governorate').value,
+        city: document.getElementById('co-city').value,
+        area: document.getElementById('co-area').value || null,
+        address_detail: document.getElementById('co-address').value,
+        payment_method: document.getElementById('co-payment').value,
+        delivery_charge: parseFloat(document.getElementById('co-delivery').value) || 0,
+        notes: document.getElementById('co-notes').value || null,
+        items,
+    };
+
+    const resp = await fetch(`/api/tenants/${tenantId}/orders`, {method: 'POST', headers, body: JSON.stringify(body)});
+    if (resp.ok) {
+        document.getElementById('create-modal').close();
+        document.getElementById('create-order-form').reset();
+        document.getElementById('order-items').innerHTML = '';
+        loadOrders();
+    } else {
+        const err = await resp.json();
+        alert(err.detail || 'Failed to create order');
+    }
+});
+
+async function loadOrders() {
+    const status = document.getElementById('status-filter').value;
+    const url = `/api/tenants/${tenantId}/orders${status ? `?status=${status}` : ''}`;
+    const resp = await fetch(url, {headers});
+    const data = await resp.json();
+    allOrders = data.orders;
+    const container = document.getElementById('orders-container');
+
+    if (data.orders.length === 0) {
+        container.innerHTML = '<article><p>No orders yet.</p></article>';
+        return;
+    }
+
+    container.innerHTML = `
+        <table>
+            <thead>
+                <tr><th>Order #</th><th>Customer</th><th>Phone</th><th>Location</th><th>Items</th><th>Total</th><th>Payment</th><th>Wallet</th><th>API</th><th>Status</th><th>Date</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                ${data.orders.map(o => {
+                    const orderId = escapeHtml(o.id);
+                    const status = escapeHtml(o.status);
+                    const payMethod = escapeHtml(o.payment_method.toUpperCase());
+                    const payLast2 = escapeHtml(o.payment_phone_last2 || '');
+                    const payTrx = escapeHtml(o.payment_trx_id || '');
+                    const apiExtId = escapeHtml(o.api_external_id || '');
+                    const apiCode = escapeHtml(o.api_status_code || '');
+                    const apiStatus = escapeHtml(o.api_status || '');
+                    return `
+                    <tr>
+                        <td><a href="#" onclick="showOrder('${orderId}'); return false;">${escapeHtml(o.order_number)}</a></td>
+                        <td>${escapeHtml(o.customer_name)}</td>
+                        <td>${escapeHtml(o.customer_phone)}</td>
+                        <td style="font-size:0.8rem;">${[escapeHtml(o.city), escapeHtml(o.governorate)].filter(Boolean).join(', ')}</td>
+                        <td style="font-size:0.8rem;">${o.items.length} item${o.items.length > 1 ? 's' : ''}</td>
+                        <td>ج.م${escapeHtml(o.total)}</td>
+                        <td style="font-size:0.8rem;">${payMethod}</td>
+                        <td style="font-size:0.8rem;">${o.payment_phone_last2 ? 'Last2: '+payLast2 : ''}${o.payment_trx_id ? ' Trx: '+payTrx : ''}${!o.payment_phone_last2 && !o.payment_trx_id ? (o.payment_method === 'cod' ? '-' : '<span style="color:#dc3545;">N/A</span>') : ''}</td>
+                        <td style="font-size:0.8rem;">${o.api_status === 'success' ? '<span class="badge badge-delivered">✅ '+( apiExtId || apiCode)+'</span>' : o.api_status === 'failed' ? '<span class="badge badge-cancelled">❌ '+(apiCode||'err')+'</span> <button class="outline" style="padding:0.1rem 0.3rem;font-size:0.7rem;" onclick="retryApi(\''+orderId+'\')">Retry</button>' : o.api_status === 'not_configured' ? '<span style="color:#94a3b8;">—</span>' : '<span style="color:#94a3b8;">—</span>'}</td>
+                        <td><span class="badge badge-${status}">${status}</span></td>
+                        <td style="font-size:0.85rem;">${new Date(o.created_at).toLocaleDateString('ar-EG')}</td>
+                        <td style="white-space:nowrap;">
+                            ${o.status === 'pending' ? `<button class="outline" style="padding:0.2rem 0.5rem;" onclick="updateStatus('${orderId}', 'confirmed')">Confirm</button>` : ''}
+                            ${o.status === 'confirmed' ? `<button class="outline" style="padding:0.2rem 0.5rem;" onclick="updateStatus('${orderId}', 'shipped')">Ship</button>` : ''}
+                            ${o.status === 'shipped' ? `<button class="outline" style="padding:0.2rem 0.5rem;" onclick="updateStatus('${orderId}', 'delivered')">Delivered</button>` : ''}
+                            ${['pending','confirmed'].includes(o.status) ? `<button class="outline secondary" style="padding:0.2rem 0.5rem;" onclick="cancelOrder('${orderId}')">Cancel</button>` : ''}
+                        </td>
+                    </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+        <small>Total: ${data.total} orders</small>
+    `;
+}
+
+async function showOrder(id) {
+    const resp = await fetch(`/api/tenants/${tenantId}/orders/${id}`, {headers});
+    const o = await resp.json();
+    currentOrderId = id;
+    document.getElementById('order-title').textContent = `Order ${o.order_number}`;
+    document.getElementById('order-notes').value = o.notes || '';
+    const paymentInfo = o.payment_method !== 'cod'
+        ? `<tr><td><strong>Wallet Number (last 2)</strong></td><td>${escapeHtml(o.payment_phone_last2) || '<em>Not provided</em>'}</td></tr>
+           <tr><td><strong>Transaction ID</strong></td><td>${escapeHtml(o.payment_trx_id) || '<em>Not provided</em>'}</td></tr>`
+        : '';
+
+    document.getElementById('order-detail').innerHTML = `
+        <table>
+            <tr><td><strong>Customer</strong></td><td>${escapeHtml(o.customer_name)}</td></tr>
+            <tr><td><strong>Phone</strong></td><td>${escapeHtml(o.customer_phone)}</td></tr>
+            <tr><td><strong>Governorate</strong></td><td>${escapeHtml(o.governorate)}</td></tr>
+            <tr><td><strong>City</strong></td><td>${escapeHtml(o.city)}</td></tr>
+            <tr><td><strong>Area</strong></td><td>${escapeHtml(o.area) || '-'}</td></tr>
+            <tr><td><strong>Address</strong></td><td>${escapeHtml(o.address_detail)}</td></tr>
+            <tr><td><strong>Payment</strong></td><td>${escapeHtml(o.payment_method.toUpperCase())}</td></tr>
+            ${paymentInfo}
+            <tr><td><strong>Status</strong></td><td><span class="badge badge-${escapeHtml(o.status)}">${escapeHtml(o.status)}</span></td></tr>
+        </table>
+
+        ${o.payment_method !== 'cod' ? `
+        <h4>Payment Verification</h4>
+        <div class="grid">
+            <div>
+                <label>Wallet Last 2 Digits</label>
+                <input type="text" id="pay-last2" value="${escapeHtml(o.payment_phone_last2 || '')}" placeholder="e.g. 78" maxlength="4">
+            </div>
+            <div>
+                <label>Transaction ID</label>
+                <input type="text" id="pay-trxid" value="${escapeHtml(o.payment_trx_id || '')}" placeholder="e.g. ABC123XYZ">
+            </div>
+            <div style="display:flex; align-items:flex-end;">
+                <button class="outline" style="padding:0.3rem 0.7rem;" onclick="savePaymentInfo('${escapeHtml(o.id)}')">Save</button>
+            </div>
+        </div>
+        ` : ''}
+
+        <h4>Items</h4>
+        <table>
+            <thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+            <tbody>
+                ${o.items.map(i => `<tr><td>${escapeHtml(i.product_name)}</td><td>${escapeHtml(i.quantity)}</td><td>ج.م${escapeHtml(i.unit_price)}</td><td>ج.م${escapeHtml(i.total_price)}</td></tr>`).join('')}
+            </tbody>
+        </table>
+        <p><strong>Subtotal:</strong> ج.م${escapeHtml(o.subtotal)} | <strong>Delivery:</strong> ج.م${escapeHtml(o.delivery_charge)} | <strong>Total:</strong> ج.م${escapeHtml(o.total)}</p>
+
+        ${o.api_status ? `
+        <h4>External API Status</h4>
+        <table>
+            <tr><td><strong>Status</strong></td><td>${o.api_status === 'success' ? '<span class="badge badge-delivered">Success</span>' : o.api_status === 'failed' ? '<span class="badge badge-cancelled">Failed</span>' : escapeHtml(o.api_status)}</td></tr>
+            ${o.api_status_code ? `<tr><td><strong>HTTP Code</strong></td><td>${escapeHtml(o.api_status_code)}</td></tr>` : ''}
+            ${o.api_external_id ? `<tr><td><strong>External Order ID</strong></td><td>${escapeHtml(o.api_external_id)}</td></tr>` : ''}
+            ${o.api_called_at ? `<tr><td><strong>Called At</strong></td><td>${new Date(o.api_called_at).toLocaleString('ar-EG')}</td></tr>` : ''}
+            ${o.api_response ? `<tr><td><strong>Response</strong></td><td><details><summary>View</summary><pre style="font-size:0.75rem;max-height:100px;overflow:auto;">${escapeHtml(o.api_response)}</pre></details></td></tr>` : ''}
+        </table>
+        ${o.api_status === 'failed' ? `<button class="outline" style="padding:0.3rem 0.7rem;" onclick="retryApi('${escapeHtml(o.id)}')">🔄 Retry API Call</button>` : ''}
+        ` : ''}
+    `;
+    document.getElementById('order-modal').showModal();
+}
+
+async function saveNotes() {
+    if (!currentOrderId) return;
+    await fetch(`/api/tenants/${tenantId}/orders/${currentOrderId}/notes`, {
+        method: 'PATCH', headers, body: JSON.stringify({notes: document.getElementById('order-notes').value})
+    });
+    alert('Notes saved');
+}
+
+async function updateStatus(id, status) {
+    await fetch(`/api/tenants/${tenantId}/orders/${id}/status`, {
+        method: 'PATCH', headers, body: JSON.stringify({status})
+    });
+    loadOrders();
+}
+
+function cancelOrder(id) {
+    document.getElementById('cancel-order-id').value = id;
+    document.getElementById('cancel-reason').value = '';
+    document.getElementById('cancel-modal').showModal();
+}
+
+async function confirmCancel() {
+    const id = document.getElementById('cancel-order-id').value;
+    const reason = document.getElementById('cancel-reason').value;
+    await fetch(`/api/tenants/${tenantId}/orders/${id}/status`, {
+        method: 'PATCH', headers, body: JSON.stringify({status: 'cancelled', notes: reason})
+    });
+    document.getElementById('cancel-modal').close();
+    loadOrders();
+}
+
+async function retryApi(orderId) {
+    if (!confirm('Retry sending this order to the external API?')) return;
+    const resp = await fetch(`/api/tenants/${tenantId}/orders/${orderId}/retry-api`, {method: 'POST', headers});
+    const result = await resp.json();
+    if (result.status === 'success') {
+        alert('API call successful! External ID: ' + (result.external_id || 'N/A'));
+    } else {
+        alert('API call failed: ' + (result.error || 'Unknown error'));
+    }
+    loadOrders();
+}
+
+async function savePaymentInfo(orderId) {
+    const body = {};
+    const last2 = document.getElementById('pay-last2')?.value?.trim();
+    const trxid = document.getElementById('pay-trxid')?.value?.trim();
+    if (last2) body.payment_phone_last2 = last2;
+    if (trxid) body.payment_trx_id = trxid;
+    if (!Object.keys(body).length) return;
+
+    const resp = await fetch(`/api/tenants/${tenantId}/orders/${orderId}/payment`, {
+        method: 'PATCH', headers, body: JSON.stringify(body)
+    });
+    if (resp.ok) alert('Payment info saved');
+}
+
+function exportCSV() {
+    if (!allOrders.length) { alert('No orders to export'); return; }
+    const rows = [['Order#','Customer','Phone','Governorate','City','Total','Status','Payment','Date']];
+    allOrders.forEach(o => {
+        rows.push([o.order_number, o.customer_name, o.customer_phone, o.governorate, o.city, o.total, o.status, o.payment_method, new Date(o.created_at).toLocaleDateString()]);
+    });
+    const csv = rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+    const blob = new Blob([csv], {type: 'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `orders_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+}
+
+loadGovernorates();
+loadProductsForSelect();
+loadOrders();
+</script>
+{% endblock %}

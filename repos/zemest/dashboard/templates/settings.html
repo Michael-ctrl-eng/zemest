@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+{% block title %}Settings - Zemest{% endblock %}
+
+{% block content %}
+<h2>Settings</h2>
+
+<!-- Token Usage Section -->
+<article>
+    <header><h3>Token Consumption</h3></header>
+    <div class="stats-grid" id="token-stats">Loading...</div>
+    <details>
+        <summary>What are tokens?</summary>
+        <p>Tokens are the units used by the AI model to process text. Every chat message and website crawl consumes tokens.
+        Chat tokens = customer conversations. Crawl/Training tokens = product extraction from websites.
+        Free tier models have rate limits. For production, consider a paid model.</p>
+    </details>
+</article>
+
+<!-- Business Settings -->
+<article>
+    <header><h3>Business Settings</h3></header>
+    <form id="settings-form">
+        <div class="grid">
+            <div>
+                <label>Business Name *</label>
+                <input type="text" id="page_name" required>
+            </div>
+            <div>
+                <label>Website URL</label>
+                <input type="url" id="website_url" placeholder="https://yourstore.com">
+            </div>
+        </div>
+
+        <div class="grid">
+            <div>
+                <label>Business Email (for order notifications)</label>
+                <input type="email" id="business_email">
+            </div>
+            <div>
+                <label>Phone Number</label>
+                <input type="text" id="business_phone" placeholder="01012345678">
+            </div>
+        </div>
+
+        <label>Notification Preference</label>
+        <select id="notification_pref">
+            <option value="email">Email</option>
+            <option value="sms">SMS</option>
+            <option value="messenger">Messenger</option>
+        </select>
+
+        <button type="submit">Save Settings</button>
+    </form>
+</article>
+
+<!-- Delivery Charges -->
+<article>
+    <header><h3>Delivery Charges</h3></header>
+    <p><small>Set default delivery charges. These are used by the AI chatbot and for order calculation. Individual products can override these if they have a <code>delivery_charge</code> attribute.</small></p>
+    <form id="delivery-form">
+        <div class="grid">
+            <div>
+                <label>Inside Cairo (ج.م)</label>
+                <input type="number" id="delivery_inside_cairo" step="1" placeholder="35">
+            </div>
+            <div>
+                <label>Outside Greater Cairo (ج.م)</label>
+                <input type="number" id="delivery_outside_cairo" step="1" placeholder="60">
+            </div>
+            <div>
+                <label>Free Delivery Above (ج.م)</label>
+                <input type="number" id="free_delivery_above" step="1" placeholder="e.g. 1000 (leave empty = no free delivery)">
+            </div>
+        </div>
+        <p><small>
+            <strong>How it works:</strong> AI tells customers the delivery charge based on their governorate. If order total exceeds "Free Delivery Above", delivery is free.
+            For heavy/special products, add <code>delivery_charge</code> attribute on the product to override.
+        </small></p>
+        <button type="submit">Save Delivery Settings</button>
+    </form>
+</article>
+
+<!-- Mobile Wallet Numbers -->
+<article>
+    <header><h3>Mobile Wallet Numbers (Vodafone Cash / InstaPay / Fawry)</h3></header>
+    <p><small>Add your mobile wallet numbers with account type. The AI chatbot will instruct customers correctly based on account type:
+        <strong>Personal</strong> = Send Money, <strong>Merchant</strong> = Payment, <strong>Agent</strong> = Cash Out.
+    </small></p>
+    <form id="mfs-form">
+        <div class="grid">
+            <div>
+                <label>Vodafone Cash Number</label>
+                <input type="text" id="mfs_vodafone_cash" placeholder="01XXXXXXXXX">
+            </div>
+            <div>
+                <label>Vodafone Cash Account Type</label>
+                <select id="mfs_vodafone_cash_type">
+                    <option value="">Not set</option>
+                    <option value="personal">Personal (Send Money)</option>
+                    <option value="merchant">Merchant (Payment)</option>
+                    <option value="agent">Agent (Cash Out)</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid">
+            <div>
+                <label>InstaPay Handle</label>
+                <input type="text" id="mfs_instapay" placeholder="yourname@instapay">
+            </div>
+            <div>
+                <label>InstaPay Account Type</label>
+                <select id="mfs_instapay_type">
+                    <option value="">Not set</option>
+                    <option value="personal">Personal</option>
+                    <option value="merchant">Merchant</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid">
+            <div>
+                <label>Fawry Code</label>
+                <input type="text" id="mfs_fawry" placeholder="Fawry merchant code">
+            </div>
+            <div>
+                <label>Fawry Account Type</label>
+                <select id="mfs_fawry_type">
+                    <option value="">Not set</option>
+                    <option value="merchant">Merchant (Payment)</option>
+                </select>
+            </div>
+        </div>
+        <button type="submit">Save Payment Numbers</button>
+    </form>
+</article>
+
+<!-- Order Placement API -->
+<article>
+    <header><h3>Order Placement API (Optional)</h3></header>
+    <p><small>Connect your website's order API. When a customer places an order via AI chat, we'll automatically create the order on your website too.</small></p>
+    <form id="order-api-form">
+        <div class="grid">
+            <div>
+                <label>API URL</label>
+                <input type="url" id="oa_url" placeholder="https://yoursite.com/api/orders">
+            </div>
+            <div>
+                <label>Method</label>
+                <select id="oa_method">
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="PATCH">PATCH</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid">
+            <div>
+                <label>Auth Type</label>
+                <select id="oa_auth_type" onchange="toggleAuthFields()">
+                    <option value="none">None</option>
+                    <option value="api_key">API Key (custom header)</option>
+                    <option value="bearer">Bearer Token</option>
+                    <option value="basic">Basic Auth (user:pass)</option>
+                </select>
+            </div>
+            <div id="auth-key-field" style="display:none;">
+                <label>Header Name</label>
+                <input type="text" id="oa_auth_key" placeholder="X-API-Key">
+            </div>
+            <div id="auth-value-field" style="display:none;">
+                <label>Key / Token</label>
+                <input type="text" id="oa_auth_value" placeholder="sk-your-api-key">
+            </div>
+        </div>
+        <div id="auth-basic-fields" style="display:none;" class="grid">
+            <div><label>Username</label><input type="text" id="oa_auth_user"></div>
+            <div><label>Password</label><input type="password" id="oa_auth_pass"></div>
+        </div>
+
+        <label>Request Body Template (JSON with placeholders)</label>
+        <textarea id="oa_template" rows="10" style="font-family:monospace; font-size:0.85rem;"></textarea>
+        <div style="margin-bottom:1rem;">
+            <button type="button" class="outline secondary" style="padding:0.2rem 0.6rem; font-size:0.8rem;" onclick="loadSampleTemplate()">Load Sample Template</button>
+            <small style="margin-left:0.5rem;">Click to auto-fill with a working example</small>
+        </div>
+        <details style="margin-bottom:1rem;" open>
+            <summary><small><strong>Available Placeholders</strong> — use these inside your JSON template</small></summary>
+            <table style="font-size:0.8rem;">
+                <tbody>
+                    <tr><td><code>{{"{{customer_name}}"}}</code></td><td>Customer's full name</td></tr>
+                    <tr><td><code>{{"{{customer_phone}}"}}</code></td><td>Phone number (01XXXXXXXXX)</td></tr>
+                    <tr><td><code>{{"{{governorate}}"}}</code></td><td>Governorate (Cairo, Giza, Alexandria, etc.)</td></tr>
+                    <tr><td><code>{{"{{city}}"}}</code></td><td>City</td></tr>
+                    <tr><td><code>{{"{{area}}"}}</code></td><td>Area/Neighborhood</td></tr>
+                    <tr><td><code>{{"{{address_detail}}"}}</code></td><td>Full street address</td></tr>
+                    <tr><td><code>{{"{{payment_method}}"}}</code></td><td>cod / vodafone_cash / instapay / fawry</td></tr>
+                    <tr><td><code>{{"{{payment_phone_last2}}"}}</code></td><td>Last 2 digits of wallet number</td></tr>
+                    <tr><td><code>{{"{{payment_trx_id}}"}}</code></td><td>Wallet Transaction ID</td></tr>
+                    <tr><td><code>{{"{{items_json}}"}}</code></td><td>Array of items: [{"name":"...","qty":1,"price":100}]</td></tr>
+                    <tr><td><code>{{"{{subtotal}}"}}</code></td><td>Items total before delivery</td></tr>
+                    <tr><td><code>{{"{{delivery_charge}}"}}</code></td><td>Delivery charge amount</td></tr>
+                    <tr><td><code>{{"{{total}}"}}</code></td><td>Grand total (subtotal + delivery)</td></tr>
+                    <tr><td><code>{{"{{order_number}}"}}</code></td><td>Our order number (ORD-YYMMDD-XXX)</td></tr>
+                    <tr><td><code>{{"{{notes}}"}}</code></td><td>Order notes</td></tr>
+                </tbody>
+            </table>
+        </details>
+
+        <div class="grid">
+            <div>
+                <label><input type="checkbox" id="oa_enabled"> Enable API</label>
+            </div>
+            <div style="display:flex; gap:0.5rem; align-items:flex-end;">
+                <button type="button" class="outline" onclick="testOrderApi()">Test API</button>
+                <button type="submit">Save</button>
+            </div>
+        </div>
+        <div id="oa-test-result" style="display:none; margin-top:0.5rem;"></div>
+    </form>
+</article>
+
+<!-- Facebook Integration -->
+<article>
+    <header><h3>Facebook Page Integration</h3></header>
+    <p><small>Connect your Facebook Page to receive customer messages via Messenger.</small></p>
+    <div class="grid">
+        <div>
+            <label>Facebook Page ID</label>
+            <input type="text" id="fb_page_id" placeholder="Your FB Page ID">
+        </div>
+        <div>
+            <label>Page Access Token</label>
+            <input type="text" id="page_access_token" placeholder="Long-lived page access token">
+        </div>
+    </div>
+    <small>Get your Page Access Token from the <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Facebook Graph API Explorer</a></small>
+    <br><br>
+    <button class="secondary" onclick="saveFB()">Save Facebook Settings</button>
+    <span id="fb-status" style="margin-left:1rem;"></span>
+</article>
+
+<!-- Knowledge Base Info -->
+<article>
+    <header><h3>Knowledge Base</h3></header>
+    <div id="kb-info">Loading...</div>
+    <br>
+    <a href="/dashboard/{{ tenant_id }}/crawl" role="button" class="outline">Manage Crawl Jobs</a>
+</article>
+
+<!-- Quick Stats -->
+<article>
+    <header><h3>Business Stats</h3></header>
+    <div class="stats-grid" id="stats-container">Loading...</div>
+</article>
+
+<!-- Danger Zone -->
+<article>
+    <header><h3 style="color: #842029;">Danger Zone</h3></header>
+    <p><small>These actions cannot be undone.</small></p>
+    <button class="secondary" style="background:#f8d7da; color:#842029; border-color:#f5c2c7;" onclick="if(confirm('Delete ALL crawled products? This cannot be undone.')) deleteCrawledProducts()">
+        Delete All Crawled Products
+    </button>
+</article>
+
+<script>
+const tenantId = '{{ tenant_id }}';
+const headers = {'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`};
+
+async function loadSettings() {
+    const resp = await fetch(`/api/tenants/${tenantId}`, {headers});
+    const t = await resp.json();
+
+    document.getElementById('page_name').value = t.page_name || '';
+    document.getElementById('website_url').value = t.website_url || '';
+    document.getElementById('business_email').value = t.business_email || '';
+    document.getElementById('business_phone').value = t.business_phone || '';
+    document.getElementById('fb_page_id').value = t.fb_page_id || '';
+    document.getElementById('notification_pref').value = t.notification_pref || 'email';
+    document.getElementById('delivery_inside_cairo').value = t.delivery_inside_cairo || 35;
+    document.getElementById('delivery_outside_cairo').value = t.delivery_outside_cairo || 60;
+    document.getElementById('free_delivery_above').value = t.free_delivery_above || '';
+    // Order API
+    const oa = t.order_api_config || {};
+    document.getElementById('oa_url').value = oa.url || '';
+    document.getElementById('oa_method').value = oa.method || 'POST';
+    document.getElementById('oa_auth_type').value = oa.auth_type || 'none';
+    document.getElementById('oa_auth_key').value = oa.auth_key || '';
+    document.getElementById('oa_auth_value').value = oa.auth_value || '';
+    document.getElementById('oa_auth_user').value = oa.auth_user || '';
+    document.getElementById('oa_auth_pass').value = oa.auth_pass || '';
+    document.getElementById('oa_template').value = oa.request_template || '';
+    document.getElementById('oa_enabled').checked = oa.enabled || false;
+    toggleAuthFields();
+
+    const mfs = t.mfs_numbers || {};
+    document.getElementById('mfs_vodafone_cash').value = mfs.vodafone_cash || '';
+    document.getElementById('mfs_vodafone_cash_type').value = mfs.vodafone_cash_type || '';
+    document.getElementById('mfs_instapay').value = mfs.instapay || '';
+    document.getElementById('mfs_instapay_type').value = mfs.instapay_type || '';
+    document.getElementById('mfs_fawry').value = mfs.fawry || '';
+    document.getElementById('mfs_fawry_type').value = mfs.fawry_type || '';
+
+    // FB connection status
+    if (t.fb_page_id) {
+        document.getElementById('fb-status').innerHTML = '<span class="badge badge-delivered">Connected</span>';
+    }
+}
+
+async function loadStats() {
+    const resp = await fetch(`/api/tenants/${tenantId}/stats`, {headers});
+    const s = await resp.json();
+
+    document.getElementById('stats-container').innerHTML = `
+        <div class="stat-card"><h2>${s.products_count}</h2><p>Products</p></div>
+        <div class="stat-card"><h2>${s.orders_count}</h2><p>Total Orders</p></div>
+        <div class="stat-card"><h2>${s.pending_orders}</h2><p>Pending</p></div>
+        <div class="stat-card"><h2>${s.active_conversations}</h2><p>Active Chats</p></div>
+        <div class="stat-card"><h2>ج.م${s.total_revenue.toLocaleString()}</h2><p>Revenue</p></div>
+    `;
+
+    // Token usage
+    document.getElementById('token-stats').innerHTML = `
+        <div class="stat-card"><h2>${(s.total_tokens || 0).toLocaleString()}</h2><p>Total Tokens</p></div>
+        <div class="stat-card"><h2>${(s.chat_tokens || 0).toLocaleString()}</h2><p>Chat Tokens</p></div>
+        <div class="stat-card"><h2>${(s.crawl_tokens || 0).toLocaleString()}</h2><p>Crawl/Training Tokens</p></div>
+        <div class="stat-card"><h2>${s.llm_calls || 0}</h2><p>LLM Calls</p></div>
+    `;
+}
+
+async function loadKBInfo() {
+    // Check crawl jobs for knowledge base status
+    try {
+        const resp = await fetch(`/api/tenants/${tenantId}/crawl/jobs`, {headers});
+        const jobs = await resp.json();
+        const completed = jobs.filter(j => j.status === 'completed');
+        const totalPages = completed.reduce((sum, j) => sum + j.pages_found, 0);
+        const totalProducts = completed.reduce((sum, j) => sum + j.products_extracted, 0);
+
+        document.getElementById('kb-info').innerHTML = `
+            <div class="token-bar">
+                <div class="token-item"><span>Crawl Jobs:</span> <span class="token-value">${jobs.length}</span></div>
+                <div class="token-item"><span>Completed:</span> <span class="token-value">${completed.length}</span></div>
+                <div class="token-item"><span>Pages Indexed:</span> <span class="token-value">${totalPages}</span></div>
+                <div class="token-item"><span>Products Found:</span> <span class="token-value">${totalProducts}</span></div>
+            </div>
+            <p><small>The knowledge base is built from crawled website pages. It contains product info, business details, policies, and FAQs that the AI uses during conversations.</small></p>
+        `;
+    } catch(e) {
+        document.getElementById('kb-info').innerHTML = '<p>No knowledge base data yet. <a href="/dashboard/' + tenantId + '/crawl">Start a crawl</a> to build one.</p>';
+    }
+}
+
+document.getElementById('settings-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {
+        page_name: document.getElementById('page_name').value,
+        website_url: document.getElementById('website_url').value || null,
+        business_email: document.getElementById('business_email').value || null,
+        business_phone: document.getElementById('business_phone').value || null,
+        notification_pref: document.getElementById('notification_pref').value,
+    };
+    const resp = await fetch(`/api/tenants/${tenantId}`, {method: 'PATCH', headers, body: JSON.stringify(body)});
+    if (resp.ok) alert('Settings saved!');
+});
+
+async function saveFB() {
+    const body = {
+        page_access_token: document.getElementById('page_access_token').value || null,
+    };
+    // Also update fb_page_id if the tenant model supports it via PATCH
+    const fbId = document.getElementById('fb_page_id').value;
+    if (fbId) body.fb_page_id = fbId;
+
+    const resp = await fetch(`/api/tenants/${tenantId}`, {method: 'PATCH', headers, body: JSON.stringify(body)});
+    if (resp.ok) {
+        document.getElementById('fb-status').innerHTML = '<span class="badge badge-delivered">Saved!</span>';
+    } else {
+        document.getElementById('fb-status').innerHTML = '<span class="badge badge-cancelled">Failed</span>';
+    }
+}
+
+async function deleteCrawledProducts() {
+    // Delete all products with source=crawl
+    const resp = await fetch(`/api/tenants/${tenantId}/products?page_size=200`, {headers});
+    const data = await resp.json();
+    const crawled = data.products.filter(p => p.source === 'crawl');
+    for (const p of crawled) {
+        await fetch(`/api/tenants/${tenantId}/products/${p.id}`, {method: 'DELETE', headers});
+    }
+    alert(`Deleted ${crawled.length} crawled products.`);
+    loadStats();
+}
+
+function loadSampleTemplate() {
+    const sample = JSON.stringify({
+        "customer_name": "{{customer_name}}",
+        "phone": "{{customer_phone}}",
+        "address": "{{address_detail}}, {{area}}, {{city}}, {{governorate}}",
+        "items": "{{items_json}}",
+        "payment_method": "{{payment_method}}",
+        "payment_trx_id": "{{payment_trx_id}}",
+        "subtotal": "{{subtotal}}",
+        "delivery_charge": "{{delivery_charge}}",
+        "total": "{{total}}",
+        "order_ref": "{{order_number}}",
+        "notes": "{{notes}}"
+    }, null, 2);
+    document.getElementById('oa_template').value = sample;
+}
+
+function toggleAuthFields() {
+    const type = document.getElementById('oa_auth_type').value;
+    document.getElementById('auth-key-field').style.display = type === 'api_key' ? '' : 'none';
+    document.getElementById('auth-value-field').style.display = ['api_key','bearer'].includes(type) ? '' : 'none';
+    document.getElementById('auth-basic-fields').style.display = type === 'basic' ? '' : 'none';
+}
+
+function getOrderApiConfig() {
+    return {
+        enabled: document.getElementById('oa_enabled').checked,
+        url: document.getElementById('oa_url').value.trim(),
+        method: document.getElementById('oa_method').value,
+        auth_type: document.getElementById('oa_auth_type').value,
+        auth_key: document.getElementById('oa_auth_key').value.trim(),
+        auth_value: document.getElementById('oa_auth_value').value.trim(),
+        auth_user: document.getElementById('oa_auth_user').value.trim(),
+        auth_pass: document.getElementById('oa_auth_pass').value.trim(),
+        request_template: document.getElementById('oa_template').value.trim(),
+    };
+}
+
+document.getElementById('order-api-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const config = getOrderApiConfig();
+    const resp = await fetch(`/api/tenants/${tenantId}`, {method: 'PATCH', headers, body: JSON.stringify({order_api_config: config})});
+    if (resp.ok) alert('Order API saved!');
+});
+
+async function testOrderApi() {
+    const result = document.getElementById('oa-test-result');
+    result.style.display = 'block';
+    result.innerHTML = '<small aria-busy="true">Testing API...</small>';
+
+    const config = getOrderApiConfig();
+    // Save first, then test with a real order if exists
+    await fetch(`/api/tenants/${tenantId}`, {method: 'PATCH', headers, body: JSON.stringify({order_api_config: config})});
+
+    // Get latest order to test with
+    const ordersResp = await fetch(`/api/tenants/${tenantId}/orders?page_size=1`, {headers});
+    const ordersData = await ordersResp.json();
+    if (!ordersData.orders.length) {
+        result.innerHTML = '<div class="flash-error">No orders to test with. Create an order first.</div>';
+        return;
+    }
+
+    const testOrder = ordersData.orders[0];
+    const resp = await fetch(`/api/tenants/${tenantId}/orders/${testOrder.id}/retry-api`, {method: 'POST', headers});
+    const data = await resp.json();
+
+    if (data.status === 'success') {
+        result.innerHTML = `<div class="flash-success">✅ API call successful! HTTP ${data.code}${data.external_id ? ' | External ID: '+data.external_id : ''}</div>`;
+    } else if (data.status === 'not_configured') {
+        result.innerHTML = '<div class="flash-error">API not enabled. Check the "Enable API" checkbox.</div>';
+    } else {
+        result.innerHTML = `<div class="flash-error">❌ Failed! HTTP ${data.code || '?'} | ${data.error || 'Unknown error'}</div>`;
+    }
+}
+
+document.getElementById('mfs-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const mfs_numbers = {};
+    const fields = ['vodafone_cash', 'instapay', 'fawry'];
+    fields.forEach(f => {
+        const num = document.getElementById(`mfs_${f}`).value.trim();
+        const type = document.getElementById(`mfs_${f}_type`).value;
+        if (num) {
+            mfs_numbers[f] = num;
+            mfs_numbers[`${f}_type`] = type || 'personal';
+        }
+    });
+
+    const resp = await fetch(`/api/tenants/${tenantId}`, {method: 'PATCH', headers, body: JSON.stringify({mfs_numbers})});
+    if (resp.ok) alert('Payment numbers saved!');
+});
+
+document.getElementById('delivery-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {
+        delivery_inside_cairo: parseFloat(document.getElementById('delivery_inside_cairo').value) || 35,
+        delivery_outside_cairo: parseFloat(document.getElementById('delivery_outside_cairo').value) || 60,
+        free_delivery_above: parseFloat(document.getElementById('free_delivery_above').value) || null,
+    };
+    const resp = await fetch(`/api/tenants/${tenantId}`, {method: 'PATCH', headers, body: JSON.stringify(body)});
+    if (resp.ok) alert('Delivery settings saved!');
+});
+
+loadSettings();
+loadStats();
+loadKBInfo();
+</script>
+{% endblock %}

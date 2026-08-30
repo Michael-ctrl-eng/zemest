@@ -1,0 +1,511 @@
+/* Custom display fonts - must come before tailwind import per CSS spec */
+@import url("https://fonts.googleapis.com/css2?family=Jersey+15&family=Bitcount+Grid+Double+Ink&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-serif-display);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* === TAVUS: THE HUMAN COMPUTING COMPANY === */
+/* Real design tokens from tavus.io production CSS */
+:root {
+  --radius: 0;
+  /* Primitives from Tavus */
+  --tavus-plastic-1: #f7f4ef;
+  --tavus-plastic-2: #eae5de;
+  --tavus-plastic-3: #e4ddd2;
+  --tavus-plastic-4: #d9d0c2;
+  --tavus-terminal-black: #140206;
+  --tavus-hardware-gray-8: #484748;
+  --tavus-hardware-gray-9: #28292a;
+  --tavus-white: #ffffff;
+  --tavus-bubbletech-1: #b8deff;  /* soft blue for announcement bar */
+  --tavus-bubbletech-2: #9bd0ff;
+  --tavus-bubbletech-3: #7cc2ff;
+  --tavus-bubbletech-4: #4aa8ff;  /* Tavus primary soft blue CTA */
+  --tavus-neon-field-1: #4a4a4a;
+  --tavus-neon-field-2: #2a2a2a;
+  --tavus-neon-field-3: #1f1f1f;
+  --tavus-neon-field-4: #141414;
+  --tavus-atomic-glow-0: #f6d18b;
+  --tavus-atomic-glow-1: #ffb835;
+  --tavus-atomic-glow-2: #ff9626;
+  --tavus-atomic-glow-3: #fd7f00;
+  --tavus-atomic-glow-4: #ff6810;
+  --tavus-atomic-glow-5: #ffe8bc;
+  --tavus-atomic-glow-6: #ffda95;
+  --tavus-atomic-glow-00: #fff5e3;
+  --tavus-floppy-fog-1: #e4e0f2;
+  --tavus-floppy-fog-2: #d0c9ed;
+  --tavus-floppy-fog-3: #b0a8d1;
+  --tavus-floppy-fog-4: #9e94c8;
+  --tavus-floppy-fog-8: #433d5b;
+  --tavus-keyboard-tan-1: #f6c1a8;
+  --tavus-keyboard-tan-2: #e4a88d;
+  --tavus-keyboard-tan-3: #d5997d;
+  --tavus-keyboard-tan-4: #bf8a71;
+  --tavus-frost-1: #f4faff;
+  --tavus-frost-2: #e8f4ff;
+  --tavus-frost-3: #d8edff;
+  --tavus-frost-4: #cbe7ff;
+  --tavus-frost-5: #b8deff;
+  --tavus-retrograde-lilac-0: #ffedff;
+  --tavus-retrograde-lilac-1: #fed7ff;
+  --tavus-retrograde-lilac-3: #fdb3ff;
+  --tavus-beige-800: #5e5850;
+
+  /* Mapped to shadcn tokens */
+  --background: var(--tavus-plastic-1);
+  --foreground: var(--tavus-terminal-black);
+  --card: var(--tavus-white);
+  --card-foreground: var(--tavus-terminal-black);
+  --popover: var(--tavus-white);
+  --popover-foreground: var(--tavus-terminal-black);
+  --primary: var(--tavus-bubbletech-4);
+  --primary-foreground: var(--tavus-terminal-black);
+  --secondary: var(--tavus-plastic-2);
+  --secondary-foreground: var(--tavus-terminal-black);
+  --muted: var(--tavus-plastic-2);
+  --muted-foreground: var(--tavus-hardware-gray-8);
+  --accent: var(--tavus-neon-field-2);
+  --accent-foreground: var(--tavus-terminal-black);
+  --destructive: var(--tavus-bubbletech-4);
+  --border: var(--tavus-terminal-black);
+  --input: var(--tavus-plastic-2);
+  --ring: var(--tavus-terminal-black);
+  --chart-1: var(--tavus-bubbletech-4);
+  --chart-2: var(--tavus-neon-field-2);
+  --chart-3: var(--tavus-atomic-glow-1);
+  --chart-4: var(--tavus-floppy-fog-3);
+  --chart-5: var(--tavus-frost-5);
+  --sidebar: var(--tavus-plastic-1);
+  --sidebar-foreground: var(--tavus-terminal-black);
+  --sidebar-primary: var(--tavus-bubbletech-4);
+  --sidebar-primary-foreground: var(--tavus-terminal-black);
+  --sidebar-accent: var(--tavus-plastic-2);
+  --sidebar-accent-foreground: var(--tavus-terminal-black);
+  --sidebar-border: var(--tavus-terminal-black);
+  --sidebar-ring: var(--tavus-terminal-black);
+}
+
+.dark {
+  --background: var(--tavus-plastic-1);
+  --foreground: var(--tavus-terminal-black);
+  --card: var(--tavus-white);
+  --card-foreground: var(--tavus-terminal-black);
+  --popover: var(--tavus-white);
+  --popover-foreground: var(--tavus-terminal-black);
+  --primary: var(--tavus-bubbletech-4);
+  --primary-foreground: var(--tavus-terminal-black);
+  --secondary: var(--tavus-plastic-2);
+  --secondary-foreground: var(--tavus-terminal-black);
+  --muted: var(--tavus-plastic-2);
+  --muted-foreground: var(--tavus-hardware-gray-8);
+  --accent: var(--tavus-neon-field-2);
+  --accent-foreground: var(--tavus-terminal-black);
+  --destructive: var(--tavus-bubbletech-4);
+  --border: var(--tavus-terminal-black);
+  --input: var(--tavus-plastic-2);
+  --ring: var(--tavus-terminal-black);
+  --sidebar: var(--tavus-plastic-1);
+  --sidebar-foreground: var(--tavus-terminal-black);
+  --sidebar-primary: var(--tavus-bubbletech-4);
+  --sidebar-primary-foreground: var(--tavus-terminal-black);
+  --sidebar-accent: var(--tavus-plastic-2);
+  --sidebar-accent-foreground: var(--tavus-terminal-black);
+  --sidebar-border: var(--tavus-terminal-black);
+  --sidebar-ring: var(--tavus-terminal-black);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "cv11";
+    letter-spacing: -0.005em;
+  }
+  ::selection {
+    background: var(--tavus-bubbletech-4);
+    color: var(--tavus-terminal-black);
+  }
+}
+
+/* === Tavus retro OS-window aesthetic === */
+@layer utilities {
+  /* Hard offset drop-shadow - NO blur, like Tavus */
+  .shadow-retro {
+    box-shadow: 4px 4px 0 0 var(--tavus-terminal-black);
+  }
+  .shadow-retro-sm {
+    box-shadow: 2px 2px 0 0 var(--tavus-terminal-black);
+  }
+  .shadow-retro-lg {
+    box-shadow: 6px 6px 0 0 var(--tavus-terminal-black);
+  }
+  .shadow-retro-xl {
+    box-shadow: 8px 8px 0 0 var(--tavus-terminal-black);
+  }
+  .shadow-retro-2xl {
+    box-shadow: 10px 10px 0 0 var(--tavus-terminal-black);
+  }
+
+  /* Background pattern: subtle dot grain — premium bitmap texture */
+  .bg-grain {
+    background-color: var(--tavus-plastic-1);
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(20, 2, 6, 0.05) 1px, transparent 0);
+    background-size: 18px 18px;
+  }
+  .bg-grain-tan {
+    background-color: var(--tavus-plastic-2);
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(20, 2, 6, 0.06) 1px, transparent 0);
+    background-size: 18px 18px;
+  }
+  .bg-grain-dark {
+    background-color: var(--tavus-terminal-black);
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.06) 1px, transparent 0);
+    background-size: 22px 22px;
+  }
+
+  /* Cloud-like blue periwinkle background — premium bitmap texture */
+  .bg-periwinkle-cloud {
+    background:
+      radial-gradient(ellipse 50% 70% at 15% 25%, rgba(184, 222, 255, 0.7) 0%, transparent 55%),
+      radial-gradient(ellipse 45% 55% at 85% 70%, rgba(203, 231, 255, 0.55) 0%, transparent 55%),
+      radial-gradient(ellipse 70% 50% at 50% 50%, rgba(244, 250, 255, 0.5) 0%, transparent 60%),
+      radial-gradient(circle at 1px 1px, rgba(74, 168, 255, 0.15) 1.2px, transparent 0),
+      var(--tavus-plastic-1);
+    background-size: auto, auto, auto, 56px 56px, auto;
+  }
+
+  /* Tavus header background - premium bitmap texture */
+  .bg-tavus-header-bg {
+    background-color: #d8e4ee;
+    background-image:
+      radial-gradient(ellipse 80% 100% at 20% 0%, rgba(184, 222, 255, 0.7) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 80% at 80% 100%, rgba(203, 231, 255, 0.5) 0%, transparent 60%),
+      radial-gradient(circle at 1px 1px, rgba(74, 168, 255, 0.2) 1.5px, transparent 0);
+    background-size: auto, auto, 56px 56px;
+  }
+
+  /* Halftone dot overlay — premium bitmap texture */
+  .bg-halftone {
+    background-image: radial-gradient(circle at 1px 1px, rgba(20, 2, 6, 0.18) 1.2px, transparent 0);
+    background-size: 5px 5px;
+  }
+  .bg-halftone-light {
+    background-image: radial-gradient(circle at 1px 1px, rgba(20, 2, 6, 0.08) 1px, transparent 0);
+    background-size: 6px 6px;
+  }
+
+  /* Stripe texture for OS window title bars (Tavus signature) */
+  .bg-stripe-title {
+    background-image: repeating-linear-gradient(
+      45deg,
+      var(--tavus-terminal-black) 0px,
+      var(--tavus-terminal-black) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  }
+
+  /* Italic serif accent for highlighted words */
+  .serif-italic {
+    font-family: var(--font-serif-display), Georgia, serif;
+    font-style: italic;
+    font-weight: 400;
+  }
+
+  /* Jersey 15 — charted/handwritten display font for hero accent */
+  .font-jersey {
+    font-family: "Jersey 15", "Comic Sans MS", cursive;
+    font-weight: 400;
+    font-style: normal;
+  }
+
+  /* Bitcount Grid Double Ink — pixel/dotted display font for auth pages */
+  .font-bitcount {
+    font-family: "Bitcount Grid Double Ink", "Courier New", monospace;
+    font-weight: 400;
+    font-style: normal;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: var(--tavus-plastic-2); }
+  ::-webkit-scrollbar-thumb {
+    background: var(--tavus-terminal-black);
+    border: 3px solid var(--tavus-plastic-2);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--tavus-hardware-gray-8); }
+
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: var(--tavus-terminal-black);
+    border-radius: 0;
+  }
+
+  /* Animations */
+  @keyframes blink-caret {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+  .animate-caret::after {
+    content: '|';
+    display: inline-block;
+    margin-left: 2px;
+    animation: blink-caret 1s steps(1) infinite;
+    font-weight: 400;
+    font-family: var(--font-serif-display);
+  }
+
+  @keyframes float-soft {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-8px) rotate(0.5deg); }
+  }
+  .animate-float-soft { animation: float-soft 6s ease-in-out infinite; }
+
+  @keyframes float-soft-2 {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-6px) rotate(-0.6deg); }
+  }
+  .animate-float-soft-2 { animation: float-soft-2 7s ease-in-out infinite; }
+
+  @keyframes scroll-x {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  .animate-scroll-x { animation: scroll-x 40s linear infinite; }
+
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent 0%,
+      black 6%,
+      black 94%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent 0%,
+      black 6%,
+      black 94%,
+      transparent 100%
+    );
+  }
+
+  /* Retro button base - press down on hover */
+  .btn-retro {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border: 1.5px solid var(--tavus-terminal-black);
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    box-shadow: 3px 3px 0 0 var(--tavus-terminal-black);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    cursor: pointer;
+    background: var(--tavus-white);
+    color: var(--tavus-terminal-black);
+    text-decoration: none;
+  }
+  .btn-retro:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 0 var(--tavus-terminal-black);
+  }
+  .btn-retro:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 0 var(--tavus-terminal-black);
+  }
+
+  /* Tavus retro window frame */
+  .win-frame {
+    background: var(--tavus-white);
+    border: 1.5px solid var(--tavus-terminal-black);
+    box-shadow: 6px 6px 0 0 var(--tavus-terminal-black);
+  }
+  .win-title-bar {
+    background: var(--tavus-white);
+    border-bottom: 1.5px solid var(--tavus-terminal-black);
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--tavus-terminal-black);
+  }
+
+  /* Glitch image effect for art portraits */
+  .img-glitch {
+    position: relative;
+    filter: contrast(1.05) saturate(1.1);
+  }
+  .img-glitch::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(56, 242, 97, 0.06) 2px,
+        rgba(56, 242, 97, 0.06) 3px
+      );
+    pointer-events: none;
+  }
+
+  /* Scanlines */
+  .scanlines {
+    position: relative;
+  }
+  .scanlines::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.15) 2px,
+      rgba(0, 0, 0, 0.15) 3px
+    );
+    pointer-events: none;
+    mix-blend-mode: multiply;
+  }
+
+  /* Black square bullet (Tavus signature) */
+  .bullet-square::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--tavus-terminal-black);
+    margin-right: 8px;
+    vertical-align: 1px;
+  }
+
+  /* === Premium bitmap utilities === */
+
+  /* Halftone gradient — fades from dense dots to nothing (premium print effect) */
+  .bg-halftone-fade {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(20, 2, 6, 0.25) 1.5px, transparent 0);
+    background-size: 8px 8px;
+    mask-image: linear-gradient(to bottom, black 0%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, transparent 100%);
+  }
+
+  /* Dense halftone — for dark backgrounds, white dots */
+  .bg-halftone-white {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.15) 1.2px, transparent 0);
+    background-size: 6px 6px;
+  }
+
+  /* Cross-hatch bitmap pattern */
+  .bg-crosshatch {
+    background-image:
+      repeating-linear-gradient(45deg, rgba(20, 2, 6, 0.06) 0, rgba(20, 2, 6, 0.06) 1px, transparent 1px, transparent 4px),
+      repeating-linear-gradient(-45deg, rgba(20, 2, 6, 0.06) 0, rgba(20, 2, 6, 0.06) 1px, transparent 1px, transparent 4px);
+  }
+
+  /* Pixel grid — fine grid lines like graph paper */
+  .bg-pixel-grid {
+    background-image:
+      linear-gradient(rgba(20, 2, 6, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(20, 2, 6, 0.04) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  /* Bitmap noise — random-looking pixel noise (premium film grain) */
+  .bg-bitmap-noise {
+    background-image:
+      radial-gradient(circle at 13px 7px, rgba(20, 2, 6, 0.08) 0.5px, transparent 0),
+      radial-gradient(circle at 5px 17px, rgba(20, 2, 6, 0.06) 0.5px, transparent 0),
+      radial-gradient(circle at 21px 21px, rgba(20, 2, 6, 0.07) 0.5px, transparent 0),
+      radial-gradient(circle at 9px 3px, rgba(20, 2, 6, 0.05) 0.5px, transparent 0);
+    background-size: 24px 24px;
+  }
+
+  /* Halftone dot fade — large dots fading out (premium poster effect) */
+  .bg-halftone-poster {
+    background-image:
+      radial-gradient(circle at 2px 2px, rgba(20, 2, 6, 0.2) 2px, transparent 2.5px);
+    background-size: 12px 12px;
+    mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
+  }
+
+  /* Scanline thick — for dark video areas */
+  .bg-scanlines-thick {
+    background-image: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 1px,
+      rgba(0, 0, 0, 0.3) 1px,
+      rgba(0, 0, 0, 0.3) 2px
+    );
+  }
+
+  /* Bitmap dither — 2x2 dithering pattern */
+  .bg-dither {
+    background-image:
+      radial-gradient(circle at 0px 0px, rgba(20, 2, 6, 0.15) 0.5px, transparent 0.5px),
+      radial-gradient(circle at 2px 2px, rgba(20, 2, 6, 0.15) 0.5px, transparent 0.5px);
+    background-size: 4px 4px;
+  }
+}

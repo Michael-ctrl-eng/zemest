@@ -1,0 +1,54 @@
+🚀 Initializing Z-AI SDK...
+🔎 Searching images: "friendly customer support agent wearing headset at computer"
+✅ Got 6 images
+{
+  "success": true,
+  "query": "friendly customer support agent wearing headset at computer",
+  "count": 6,
+  "ranked": false,
+  "captioned_count": 0,
+  "results": [
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/cc1e4718472b.jpg",
+      "caption": "",
+      "source": "Alamy",
+      "original_width": "1300px",
+      "original_height": "957px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/4bd30a863525.jpg",
+      "caption": "",
+      "source": "RingCentral",
+      "original_width": "2048px",
+      "original_height": "1322px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/59d11f7ff7de.jpg",
+      "caption": "",
+      "source": "Ant Marketing",
+      "original_width": "2560px",
+      "original_height": "1708px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/2027fab3ca0f.png",
+      "caption": "",
+      "source": "Analytics 365",
+      "original_width": "2560px",
+      "original_height": "639px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/19a9db370431.jpg",
+      "caption": "",
+      "source": "Robert Half",
+      "original_width": "3072px",
+      "original_height": "1229px"
+    },
+    {
+      "original_url": "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/15e5a03ea400.jpeg",
+      "caption": "",
+      "source": "Pure IP",
+      "original_width": "5472px",
+      "original_height": "3648px"
+    }
+  ]
+}
