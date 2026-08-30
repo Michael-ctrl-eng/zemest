@@ -815,3 +815,30 @@ E2E VERIFIED (real browser, preview URL):
 Stage Summary:
 - The Messenger card (user's uploaded wireframe-hands jpg) now leads the carousel; WhatsApp and Instagram follow.
 - Files: src/components/site/use-cases.tsx.
+---
+Task ID: 17
+Agent: main-orchestrator
+Task: Faster footer/CTA images, remove "trained on your chats" copy, push to GitHub
+
+Work Log:
+- IMAGE SPEED: footer (zemest-cloud-sea-footer.avif 1.6KB) + CTA (zemest-cloud-sea-cta.avif 4.8KB) both had loading="lazy" — download didn't start until scroll, causing visible pop-in/dark flash. Changed both to loading="eager" + fetchPriority="low": 7KB total downloads with initial page load, never competes with the hero LCP. Browser proof: freshly opened page (top of page, never scrolled) → both images complete=true, naturalWidth=1920, fetchpriority attr in DOM.
+- COPY — removed "trained on your chats" phrasing from ALL customer-facing surfaces (9 files):
+  * what-is-pal.tsx (the "what agents can do" SEE/HEAR/UNDERSTAND/REPLY section — primary target): UNDERSTAND now "Knows your products, your prices, your tone — and what's in stock right now."; intro now "…across your WhatsApp, Facebook, and Instagram" (was "trained on your own … history").
+  * hero.tsx: "…Instagram chats, replying like the buyer themselves" (dropped "— trained on your old conversations").
+  * use-cases.tsx WhatsApp card: dropped "Trained on every WhatsApp chat you've ever had,".
+  * conversational-demo.tsx: dropped "Trained on every chat you've ever had."
+  * cta.tsx: "Create an account, connect your WhatsApp / Facebook / Instagram, and ship your first reply…" (dropped "train your agent on your old chats").
+  * layout.tsx meta description: dropped "Trained on your old chats."
+  * dashboard/[tenantId]/layout.tsx banner: "Arabic moderation with every accent — live on your channels."
+  * solutions/page.tsx WhatsApp card: dropped the trained phrase.
+  * Intentionally KEPT: "Trained on millions of Arabic commerce conversations" (models/products/research — general model claim, not user chats) and the pricing FAQ describing the opt-in Style Learning feature.
+- GIT PUSH: normalized stray 755 mode on auth-cookies.ts; commit b25c9f9 (9 files, +14/-12) pushed to github.com/Michael-ctrl-eng/zemest main (8112de2..b25c9f9). Remote HEAD verified = b25c9f9. Token used one-shot in URL only, never stored.
+
+E2E VERIFIED (real browser, preview URL):
+- innerText sweep: zero matches for any trained-on-your-chats variant; what-is-pal/hero/CTA new copy confirmed rendering.
+- CTA screenshot + zero page/console errors; tsc 0 errors on changed files (only pre-existing careers/partnerships); eslint clean.
+
+Stage Summary:
+- Footer/CTA cloud backgrounds now paint instantly on scroll (preloaded with page, 7KB).
+- No "trained on your chats" language anywhere customers look — capabilities section describes what the agent KNOWS, not what it read.
+- All live on GitHub: b25c9f9. Token still valid — user should still rotate it (it was exposed in chat earlier).
