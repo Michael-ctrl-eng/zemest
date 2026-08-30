@@ -776,3 +776,21 @@ Stage Summary:
 - Login + dashboard + full console now work on the preview URL.
 - Auth is unkillable by sandbox restarts: login/register/facebook auto-revive the backend daemon on the first attempt (~2s) instead of showing "Network error".
 - Files: src/app/api/auth/{login,register,facebook}/route.ts (+fetchWithHeal import + wrapped backend call).
+---
+Task ID: 15
+Agent: main-orchestrator
+Task: Fix iframe login loop (root cause of "stuck on login"), push to GitHub, VPS + small-model research
+
+Work Log:
+- LOGIN "STUCK ON LOGIN PAGE" (user report despite Task 14 fix): server flow was fine (curl login→cookie→dashboard all 200 on preview URL). ROOT CAUSE: the user opens the preview inside the chat's IFRAME — browsers silently block SameSite=Lax cookies in cross-site iframe contexts. Login POST succeeded, the httpOnly cookie never landed, /dashboard bounced back to /login. Edge proxy tunnels HTTPS as internal HTTP without usable x-forwarded-proto; the reliable HTTPS signal is the browser's Origin header.
+- FIX: new src/lib/auth-cookies.ts (authCookieAttributes) — HTTPS requests (Origin starts with https://) get SameSite=None; Secure; Partitioned (CHIPS, survives 3P-cookie blocking); local http keeps Lax. Applied to login + register + facebook routes.
+- PROOF: built public/iframe-test.html embedding the preview URL cross-site, logged in INSIDE the iframe via element refs (fill + SIGN IN) → iframe navigated to dashboard, "Your businesses / CAIRO SNEAKERS" rendered inside the frame. VLM-verified. Top-level flow re-verified too. Test page removed after.
+- GIT PUSH: token = Michael-ctrl-eng PAT. Curated the repo for a PUBLIC push: gitignore added (.env*, .venv, db/, logs/pids, design-audit/, tool-results/, skills/, agent junk, tavus-ref scraped material, big uploads); untracked root .env (had only local DATABASE_URL) and db/custom.db; stripped nested repos/*/.git (history preserved on GitHub already); scanned index for real secrets (all matches were docs placeholders; real keys only in untracked repos/zemest/.env — excluded). Result: 724 files / 33MB (was 564MB incl. tracked .venv + nested .git).
+- PUSHED github.com/Michael-ctrl-eng/zemest main: single clean snapshot commit 39e3ccc + merge commit 8112de2 preserving the original remote history (merge -s ours, no force-push). Remote tree verified via API: 899 entries incl. backend source, frontend, auth-cookies.ts, card images, worklog. Local main reset to 8112de2. NOTE: phantom `git checkout main` between tool calls kept flipping branches + wiping working-tree fixes — recovered via git reset --hard; lesson: do checkout+merge+push in ONE bash call.
+- TOKEN HYGIENE: user's PAT was pasted in chat — used one-shot in push URL (not stored in .git/config); advised rotation.
+- RESEARCH (chat answer, sources via web-search): small model for cheap VPS = Qwen2.5 1.5B Instruct Q4 (~1.1GB via Ollama, strong Arabic) on 4GB; VPS market: Hetzner CAX11 ARM 2vCPU/4GB ~€5/mo (TP ~3.0, infra solid), Contabo 4GB ~$5-6/mo (TP 4.5/11K reviews, oversells), RackNerd 2GB $35.99/yr (TP 4.0), IONOS XS $2/mo. Zemest full stack budget: Next standalone ~0.3GB + FastAPI ~0.15GB + Postgres ~0.2GB + Ollama Qwen2.5-1.5B ~1.5GB + OS ~0.3GB ≈ 2.5-3GB → 4GB VPS comfortable; EU location best for Cairo latency.
+
+Stage Summary:
+- Login now works in EVERY context: top-level tab, iframe embed, local dev — cookies adapt to protocol automatically.
+- Project is on GitHub (public, clean, secret-free, 33MB, history preserved): github.com/Michael-ctrl-eng/zemest
+- Files: src/lib/auth-cookies.ts (new), src/app/api/auth/{login,register,facebook}/route.ts, .gitignore.
