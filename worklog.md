@@ -794,3 +794,24 @@ Stage Summary:
 - Login now works in EVERY context: top-level tab, iframe embed, local dev — cookies adapt to protocol automatically.
 - Project is on GitHub (public, clean, secret-free, 33MB, history preserved): github.com/Michael-ctrl-eng/zemest
 - Files: src/lib/auth-cookies.ts (new), src/app/api/auth/{login,register,facebook}/route.ts, .gitignore.
+---
+Task ID: 16
+Agent: main-orchestrator
+Task: Put the Messenger moderation card first in the UseCases carousel
+
+Work Log:
+- USER REQUEST: make the Messenger moderation card first, then the other cards after.
+- Reordered the `cases` array in src/components/site/use-cases.tsx: MESSENGER AGENT (wireframe-hands artwork) now index 0 = the default active/center card; WHATSAPP AGENT second; INSTAGRAM AGENT third.
+- Intro copy reordered to match the visual order: "a Messenger support rep, a WhatsApp seller, an Instagram DM closer".
+- No logic/layout changes — only array order + one sentence.
+
+E2E VERIFIED (real browser, preview URL):
+- SSR DOM order: Instagram (left/prev) | MESSENGER (center/active, tag "FACEBOOK MESSENGER MODERATION", +38% CSAT) | WhatsApp (right/next).
+- Center card title "Every comment, every message, answered instantly"; messenger image complete=true, naturalWidth>0.
+- Rotation click-test: Next → WhatsApp ("Replies like the buyer is talking to you") — order Messenger→WhatsApp→Instagram→loop.
+- Zero page/console errors; tsc 0 errors on changed file (only pre-existing careers/partnerships PageSectionProps errors); eslint clean.
+- Screenshot: design-audit/task16/usecases-messenger-first.png
+
+Stage Summary:
+- The Messenger card (user's uploaded wireframe-hands jpg) now leads the carousel; WhatsApp and Instagram follow.
+- Files: src/components/site/use-cases.tsx.

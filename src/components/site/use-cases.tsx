@@ -7,6 +7,14 @@ import { ArrowLeft, ArrowRight } from "lucide-react";
 
 const cases = [
   {
+    tag: "FACEBOOK MESSENGER MODERATION",
+    label: "MESSENGER AGENT",
+    title: "Every comment, every message, answered instantly",
+    desc: "The agent reads images, listens to voice messages, and responds in the dialect your customers actually use — no script, no awkward bot vibes.",
+    image: "/zemest-card-messenger.avif",
+    stat: { v: "+38%", k: "CSAT" },
+  },
+  {
     tag: "WHATSAPP MODERATION",
     label: "WHATSAPP AGENT",
     title: "Replies like the buyer is talking to you",
@@ -21,14 +29,6 @@ const cases = [
     desc: "From story replies to product inquiries, the agent handles every DM, knows what's in stock, quotes prices, and books the order — in Arabic or English.",
     image: "/zemest-card-instagram.avif",
     stat: { v: "+47%", k: "DM→sale lift" },
-  },
-  {
-    tag: "FACEBOOK MESSENGER MODERATION",
-    label: "MESSENGER AGENT",
-    title: "Every comment, every message, answered instantly",
-    desc: "The agent reads images, listens to voice messages, and responds in the dialect your customers actually use — no script, no awkward bot vibes.",
-    image: "/zemest-card-messenger.avif",
-    stat: { v: "+38%", k: "CSAT" },
   },
 ];
 
@@ -55,7 +55,7 @@ export function UseCases() {
             <span className="serif-italic">conversation</span>
           </motion.h2>
           <p className="mt-6 text-base sm:text-lg text-[var(--tavus-hardware-gray-8)] max-w-2xl mx-auto leading-relaxed">
-            An agent can be whatever the moment calls for: a WhatsApp seller, an Instagram DM closer, a Messenger support rep. One agent that already knows your products, prices, and stock. Here are a few ways brands are putting them to work:
+            An agent can be whatever the moment calls for: a Messenger support rep, a WhatsApp seller, an Instagram DM closer. One agent that already knows your products, prices, and stock. Here are a few ways brands are putting them to work:
           </p>
         </div>
 
