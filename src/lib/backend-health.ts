@@ -60,7 +60,9 @@ export function ensureBackend(): Promise<boolean> {
   return healing;
 }
 
-/** Run a fetch against the backend; on a network error, heal once and retry. */
+/** Run a fetch against the backend; on a network error, heal once and retry.
+ * A hung backend can never pin the UI: every attempt is bounded by a 30s
+ * timeout (was unbounded → infinite spinner on worst-case stalls). */
 export async function fetchWithHeal(
   path: string,
   init: RequestInit,
@@ -69,7 +71,10 @@ export async function fetchWithHeal(
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      return await fetch(path, init);
+      return await fetch(path, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(30_000),
+      });
     } catch (e) {
       lastErr = e;
       const healed = await ensureBackend();

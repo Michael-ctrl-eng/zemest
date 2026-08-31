@@ -20,6 +20,40 @@ from app.models.knowledge_base import KnowledgeBase
 
 logger = logging.getLogger(__name__)
 
+# --- SPEED: node-selection short-circuits ----------------------------------- #
+# Trees at or below this size include ALL nodes without asking the LLM —
+# kills the second LLM round-trip on every customer message for small
+# catalogs (the common case). Cuts ~1.5-3s per reply.
+SMALL_TREE_MAX_NODES = 14
+
+# (tenant_id, normalized query) → selected node ids, TTL 10 min.
+_SELECTION_TTL_SECONDS = 600.0
+_SELECTION_CACHE_MAX = 256
+_selection_cache: dict = {}
+
+
+def _norm_query(q: str) -> str:
+    """Lowercase + collapse whitespace: near-duplicate queries hit cache."""
+    return " ".join((q or "").lower().split())[:200]
+
+
+def _selection_cache_get(key):
+    import time as _time
+    hit = _selection_cache.get(key)
+    if hit and (_time.monotonic() - hit[0]) < _SELECTION_TTL_SECONDS:
+        return hit[1]
+    _selection_cache.pop(key, None)
+    return None
+
+
+def _selection_cache_put(key, ids) -> None:
+    import time as _time
+    if len(_selection_cache) >= _SELECTION_CACHE_MAX:
+        # Drop the ~32 oldest entries (cheap approximate LRU).
+        for k in list(_selection_cache)[:32]:
+            _selection_cache.pop(k, None)
+    _selection_cache[key] = (_time.monotonic(), list(ids))
+
 
 async def retrieve_context(
     db: AsyncSession,
@@ -59,8 +93,26 @@ async def retrieve_context(
     if not toc:
         return "", ""
 
-    # Ask LLM which nodes are relevant
-    selected_ids, token_info = await _select_nodes(toc, query, max_nodes)
+    # --- SPEED: avoid a second LLM round-trip per chat message -------------
+    # (a) Small catalogs (the common case): include every node — the main
+    #     completion call gets full context and quality is unchanged.
+    # (b) Repeat queries: serve node selection from a short-lived cache.
+    all_nodes = _flatten_all(structure)
+    token_info = None
+    if len(all_nodes) <= SMALL_TREE_MAX_NODES:
+        selected_ids = [
+            n["node_id"] for n in all_nodes if n.get("node_id")
+        ]
+    else:
+        cache_key = (str(tenant_id), _norm_query(query))
+        cached = _selection_cache_get(cache_key)
+        if cached is not None:
+            selected_ids = cached
+        else:
+            # Ask LLM which nodes are relevant
+            selected_ids, token_info = await _select_nodes(toc, query, max_nodes)
+            if selected_ids:
+                _selection_cache_put(cache_key, selected_ids)
 
     # Persist token usage for the retrieval LLM call (best-effort).
     if token_info:

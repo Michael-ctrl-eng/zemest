@@ -56,22 +56,44 @@ async def list_customers(
     )
     customers = result.scalars().all()
 
+    # Per-customer aggregates in 3 batched GROUP BY queries (was 3 queries
+    # PER customer → 151 queries at page_size 50; now constant regardless
+    # of page size).
+    ids = [c.id for c in customers]
+    agg: dict = {}
+    if ids:
+        o_counts = await db.execute(
+            select(Order.customer_id, func.count(Order.id))
+            .where(Order.customer_id.in_(ids))
+            .group_by(Order.customer_id)
+        )
+        for cid, cnt in o_counts.all():
+            agg.setdefault(cid, {"orders": 0, "convs": 0, "spent": 0.0})["orders"] = int(cnt or 0)
+
+        c_counts = await db.execute(
+            select(Conversation.customer_id, func.count(Conversation.id))
+            .where(Conversation.customer_id.in_(ids))
+            .group_by(Conversation.customer_id)
+        )
+        for cid, cnt in c_counts.all():
+            agg.setdefault(cid, {"orders": 0, "convs": 0, "spent": 0.0})["convs"] = int(cnt or 0)
+
+        spent_rows = await db.execute(
+            select(Order.customer_id, func.coalesce(func.sum(Order.total), 0))
+            .where(
+                Order.customer_id.in_(ids),
+                Order.status.in_(["confirmed", "shipped", "delivered"]),
+            )
+            .group_by(Order.customer_id)
+        )
+        for cid, spent_total in spent_rows.all():
+            agg.setdefault(cid, {"orders": 0, "convs": 0, "spent": 0.0})["spent"] = float(spent_total or 0)
+
     # Get counts for each customer
     responses = []
     for c in customers:
-        o_count = await db.scalar(
-            select(func.count(Order.id)).where(Order.customer_id == c.id)
-        ) or 0
-        c_count = await db.scalar(
-            select(func.count(Conversation.id)).where(Conversation.customer_id == c.id)
-        ) or 0
-        spent = await db.scalar(
-            select(func.coalesce(func.sum(Order.total), 0)).where(
-                Order.customer_id == c.id,
-                Order.status.in_(["confirmed", "shipped", "delivered"]),
-            )
-        ) or 0
-        responses.append(_customer_response(c, o_count, c_count, float(spent)))
+        stats = agg.get(c.id, {"orders": 0, "convs": 0, "spent": 0.0})
+        responses.append(_customer_response(c, stats["orders"], stats["convs"], stats["spent"]))
 
     return CustomerListResponse(
         customers=responses, total=total, page=page, page_size=page_size

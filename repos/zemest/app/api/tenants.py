@@ -62,8 +62,10 @@ async def update_tenant_detail(
     tenant=Depends(get_tenant),
     db: AsyncSession = Depends(get_db),
 ):
+    # exclude_unset (not exclude_none): the settings page deliberately sends
+    # nulls to CLEAR a field — exclude_none silently dropped them.
     updated = await tenant_service.update_tenant(
-        db, tenant, **req.model_dump(exclude_none=True)
+        db, tenant, **req.model_dump(exclude_unset=True)
     )
     return _tenant_response(updated)
 

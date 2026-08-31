@@ -43,7 +43,9 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Zemest" }],
   icons: {
-    icon: "/zemest-logo.png",
+    // 10KB variant — the 397KB full-res logo was downloaded by EVERY
+    // first visit to EVERY route just to render a 32px tab icon.
+    icon: "/zemest-logo-96.png",
   },
   openGraph: {
     title: "Zemest — AI Moderation Agents",

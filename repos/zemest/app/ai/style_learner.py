@@ -23,7 +23,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.language_engine import detect_language_advanced
@@ -61,6 +61,11 @@ async def collect_merchant_messages(
         .where(
             Message.conversation.has(tenant_id=tenant_id),
             Message.role.in_(["assistant", "merchant"]),
+            # Never learn from canned LLM-unavailable apologies.
+            or_(
+                Message.is_fallback.is_(None),
+                Message.is_fallback == False,  # noqa: E712
+            ),
         )
         .order_by(Message.created_at.desc())
         .limit(limit)
@@ -449,13 +454,39 @@ async def import_messages_and_build_style(
     for msg in messages:
         threads[msg["thread_title"]].append(msg)
 
-    # Import each thread as a conversation
+    # Import each thread as a conversation. conversations.customer_id is a
+    # NOT-NULL FK, so each imported thread gets (or reuses) a synthetic
+    # customer named after the thread title. (Fixes the 500 that made
+    # /import/chat-history unusable — the trainer's main data on-ramp.)
+    customer_cache: dict[str, Customer] = {}
     for thread_title, thread_msgs in threads.items():
+        customer = customer_cache.get(thread_title)
+        if customer is None:
+            safe_psid = f"imported:{uuid.uuid5(uuid.NAMESPACE_DNS, f'{tenant.id}:{thread_title}')}"
+            existing = await db.execute(
+                select(Customer).where(
+                    Customer.tenant_id == tenant.id,
+                    Customer.fb_psid == safe_psid,
+                )
+            )
+            customer = existing.scalar_one_or_none()
+            if customer is None:
+                customer = Customer(
+                    id=uuid.uuid4(),
+                    tenant_id=tenant.id,
+                    fb_psid=safe_psid,
+                    channel=channel,
+                    name=thread_title[:255] or "Imported thread",
+                )
+                db.add(customer)
+                await db.flush()
+            customer_cache[thread_title] = customer
+
         # Create or find a conversation for this thread
         conv = Conversation(
             id=uuid.uuid4(),
             tenant_id=tenant.id,
-            customer_id=None,  # imported conversations may not have a customer
+            customer_id=customer.id,
             channel=channel,
             status="imported",
         )

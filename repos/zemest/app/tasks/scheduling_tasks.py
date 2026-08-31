@@ -6,7 +6,7 @@ FB/IG Graph API, and updates their status.
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
 
@@ -16,6 +16,10 @@ from app.models.scheduled_post import ScheduledPost
 from app.models.tenant import Tenant
 
 logger = logging.getLogger(__name__)
+
+# Bounded publish retries: stuck/failed posts retry at most 3 times, then
+# stay failed with a real error message (no infinite hot-loop).
+MAX_PUBLISH_RETRIES = 3
 
 
 @celery_app.task(name="publish_scheduled_posts")
@@ -30,8 +34,56 @@ def publish_scheduled_posts():
 async def _publish_due_posts_async():
     """Async implementation of scheduled post publishing."""
     async with async_session() as db:
-        # Find posts due for publishing
         now = datetime.utcnow()
+
+        # --- Crash-safety: recover posts stuck in 'publishing' -------------
+        # A daemon restart mid-publish leaves rows in 'publishing' forever.
+        # Anything stuck > 5 minutes is dead: bounded retry via retry_count
+        # (≤ 3 attempts), then a terminal 'failed'.
+        try:
+            stuck_cutoff = now - timedelta(minutes=5)
+            stuck = await db.execute(
+                select(ScheduledPost).where(
+                    ScheduledPost.status == "publishing",
+                    ScheduledPost.updated_at <= stuck_cutoff,
+                )
+            )
+            stuck_posts = list(stuck.scalars().all())
+            for post in stuck_posts:
+                post.retry_count = (post.retry_count or 0) + 1
+                if post.retry_count >= MAX_PUBLISH_RETRIES:
+                    post.status = "failed"
+                    post.error_message = "Timed out while publishing (worker restart) — gave up after max retries"
+                    logger.error(f"Post {post.id} stuck in publishing; marked failed after {post.retry_count} attempts")
+                else:
+                    post.status = "scheduled"
+                    post.error_message = "Recovered after stuck publish — retrying"
+                    logger.warning(f"Post {post.id} recovered from stuck 'publishing'; retry #{post.retry_count}")
+            if stuck_posts:
+                await db.commit()
+        except Exception:
+            logger.exception("Stuck-publish recovery failed (continuing)")
+
+        # --- Bounded retry of failed posts ----------------------------------
+        # Genuine failures (expired token, deleted media) retry up to
+        # MAX_PUBLISH_RETRIES with a 5-minute backoff between attempts.
+        try:
+            retry_cutoff = now - timedelta(minutes=5)
+            retryable = await db.execute(
+                select(ScheduledPost).where(
+                    ScheduledPost.status == "failed",
+                    ScheduledPost.retry_count < MAX_PUBLISH_RETRIES,
+                    ScheduledPost.updated_at <= retry_cutoff,
+                )
+            )
+            for post in list(retryable.scalars().all()):
+                post.status = "scheduled"
+                logger.info(f"Post {post.id} requeued for retry (attempt {post.retry_count + 1}/{MAX_PUBLISH_RETRIES})")
+            await db.commit()
+        except Exception:
+            logger.exception("Failed-post requeue failed (continuing)")
+
+        # Find posts due for publishing
         result = await db.execute(
             select(ScheduledPost).where(
                 ScheduledPost.status == "scheduled",

@@ -4,6 +4,7 @@ Usage:
   .venv/bin/python daemon_backend.py start|stop|restart|status
 """
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -12,7 +13,38 @@ import time
 REPO = "/home/z/my-project/repos/zemest"
 PIDFILE = os.path.join(REPO, "backend.pid")
 LOG = os.path.join(REPO, "backend.log")
-ENV = {**os.environ, "DATABASE_URL": "sqlite+aiosqlite:///./zemest_local.db"}
+SECRET_FILE = os.path.join(REPO, ".jwt_secret")  # gitignored, stable across restarts
+
+
+def _persistent_jwt_secret() -> str:
+    """Return a random secret, generated once and persisted (not committed).
+
+    A stable secret keeps issued tokens valid across daemon restarts while
+    never shipping the compiled-in default (forgeable-tokens hole).
+    """
+    try:
+        existing = open(SECRET_FILE).read().strip()
+        if len(existing) >= 32:
+            return existing
+    except OSError:
+        pass
+    fresh = secrets.token_urlsafe(48)
+    with open(SECRET_FILE, "w") as f:
+        f.write(fresh)
+    try:
+        os.chmod(SECRET_FILE, 0o600)
+    except OSError:
+        pass
+    return fresh
+
+
+ENV = {
+    **os.environ,
+    "DATABASE_URL": "sqlite+aiosqlite:///./zemest_local.db",
+    "JWT_SECRET_KEY": _persistent_jwt_secret(),
+    # No Redis in the sandbox: skip the ~1s startup probe + rate-limiter wait.
+    "REDIS_URL": "",
+}
 
 
 def read_pid():

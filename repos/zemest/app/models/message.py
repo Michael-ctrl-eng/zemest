@@ -21,6 +21,9 @@ class Message(Base):
     channel: Mapped[str] = mapped_column(String(20), default="messenger")
     media_urls: Mapped[Optional[list]] = mapped_column(JSON, default=None)
     fb_message_id: Mapped[Optional[str]] = mapped_column(String(128))
+    # True when the reply is a canned LLM-unavailable apology. Both style
+    # pipelines skip these so the agent never "learns" its own failures.
+    is_fallback: Mapped[Optional[bool]] = mapped_column(default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
 
     conversation = relationship("Conversation", back_populates="messages")

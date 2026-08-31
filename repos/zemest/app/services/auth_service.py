@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 import httpx
@@ -20,7 +21,7 @@ async def register_user(db: AsyncSession, name: str, email: str, password: str) 
         id=uuid.uuid4(),
         name=name,
         email=email,
-        hashed_password=hash_password(password),
+        hashed_password=await asyncio.to_thread(hash_password, password),
     )
     db.add(user)
     await db.flush()
@@ -32,7 +33,10 @@ async def login_user(db: AsyncSession, email: str, password: str) -> str:
     user = result.scalar_one_or_none()
     if not user or not user.hashed_password:
         raise ValueError("Invalid credentials")
-    if not verify_password(password, user.hashed_password):
+    # bcrypt runs off the event loop: it measured ~245ms of pure CPU and used
+    # to stall EVERY concurrent request on the single uvicorn worker.
+    ok = await asyncio.to_thread(verify_password, password, user.hashed_password)
+    if not ok:
         raise ValueError("Invalid credentials")
 
     return create_access_token({"sub": str(user.id)})

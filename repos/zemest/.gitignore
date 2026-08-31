@@ -61,3 +61,10 @@ test.db
 
 # Claude Code internal
 .claude/
+
+# Daemon runtime secrets/state (never commit)
+.jwt_secret
+backend.pid
+backend.log
+zemest_local.db
+zemest_local.db-*

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -52,6 +54,57 @@ _NO_KEY_UNTIL = 0.0
 _NO_KEY_COOLDOWN = 60.0  # seconds
 
 
+# 3. Z.ai internal provider (OpenAI-compatible). Works in the z.ai sandbox
+#    with ZERO external keys — reads /etc/.z-ai-config once at startup.
+#    Env overrides: ZAI_BASE_URL / ZAI_TOKEN / ZAI_API_KEY / ZAI_MODEL.
+_ZAI_CONFIG: dict | None = None
+_ZAI_LOADED = False
+
+
+def _load_zai_config() -> dict | None:
+    """Load Z.ai credentials from /etc/.z-ai-config (cached, best-effort).
+
+    Returns None when unavailable → provider is skipped in the ladder.
+    """
+    global _ZAI_CONFIG, _ZAI_LOADED
+    if _ZAI_LOADED:
+        return _ZAI_CONFIG
+    _ZAI_LOADED = True
+    base = settings.ZAI_BASE_URL if hasattr(settings, "ZAI_BASE_URL") else ""
+    token = ""
+    api_key = ""
+    chat_id = ""
+    user_id = ""
+    if base and (settings.ZAI_TOKEN if hasattr(settings, "ZAI_TOKEN") else ""):
+        token = settings.ZAI_TOKEN
+    else:
+        try:
+            raw = json.loads(Path("/etc/.z-ai-config").read_text("utf-8"))
+            base = raw.get("baseUrl", "")
+            api_key = raw.get("apiKey", "")
+            token = raw.get("token", "")
+            chat_id = raw.get("chatId", "")
+            user_id = raw.get("userId", "")
+        except Exception:
+            return None
+    if not (base and token):
+        return None
+    _ZAI_CONFIG = {
+        "base_url": base.rstrip("/"),
+        "api_key": api_key,
+        "token": token,
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "model": getattr(settings, "ZAI_MODEL", "") or "glm-4.6",
+    }
+    return _ZAI_CONFIG
+
+
+def zai_available() -> bool:
+    """True when the internal Z.ai provider is usable."""
+    return _load_zai_config() is not None
+
+
 @dataclass
 class LLMResponse:
     content: str
@@ -78,19 +131,33 @@ async def chat_completion_with_usage(
     temperature: float = 0.7,
     max_tokens: int = 1024,
 ) -> LLMResponse:
-    """Call OpenRouter and return content + token usage.
+    """Call the best available LLM provider and return content + token usage.
+
+    Provider ladder (first available wins, failures fall through):
+    1. Z.ai internal API (sandbox/production z.ai infra — no external key)
+    2. OpenRouter (OPENROUTER_API_KEY) with fallback models
 
     Only 1 API call per message in the normal case.
     Fallbacks only trigger on failure (rate limit, error).
     """
     global _NO_KEY_UNTIL
 
+    # Provider 1: Z.ai internal (OpenAI-compatible). Skipped when the caller
+    # explicitly requested a different model (OpenRouter model id).
+    zai_cfg = _load_zai_config()
+    if zai_cfg is not None and (model is None or model == settings.OPENROUTER_MODEL):
+        try:
+            return await _call_zai(messages, temperature, max_tokens, zai_cfg)
+        except Exception as e:
+            logger.warning(f"Z.ai provider failed: {e}, falling through to OpenRouter...")
+
+    # Provider 2: OpenRouter.
     # Fail fast: no key configured (or breaker open) → single instant error.
     if not settings.OPENROUTER_API_KEY:
         if time.monotonic() < _NO_KEY_UNTIL:
-            raise RuntimeError("OPENROUTER_API_KEY not configured")
+            raise RuntimeError("No LLM provider available (Z.ai down, OPENROUTER_API_KEY unset)")
         _NO_KEY_UNTIL = time.monotonic() + _NO_KEY_COOLDOWN
-        raise RuntimeError("OPENROUTER_API_KEY not configured")
+        raise RuntimeError("No LLM provider available (Z.ai down, OPENROUTER_API_KEY unset)")
     _NO_KEY_UNTIL = 0.0
 
     primary = model or settings.OPENROUTER_MODEL
@@ -186,6 +253,68 @@ async def _call_openrouter(
     return LLMResponse(
         content=content,
         model=used_model,
+        prompt_tokens=usage.get("prompt_tokens", 0),
+        completion_tokens=usage.get("completion_tokens", 0),
+        total_tokens=usage.get("total_tokens", 0),
+    )
+
+
+# --- Provider 1: Z.ai internal API (OpenAI-compatible) ---------------------- #
+
+async def _call_zai(
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+    cfg: dict,
+) -> LLMResponse:
+    """Call the internal Z.ai chat-completions API.
+
+    Uses the sandbox's own GLM inference (no external key required) via the
+    shared pooled client. Non-200 responses raise so the provider ladder can
+    fall through to OpenRouter.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {cfg['api_key']}",
+        "X-Z-AI-From": "Z",
+        "X-Token": cfg["token"],
+    }
+    if cfg.get("chat_id"):
+        headers["X-Chat-Id"] = cfg["chat_id"]
+    if cfg.get("user_id"):
+        headers["X-User-Id"] = cfg["user_id"]
+
+    payload = {
+        "model": cfg["model"],
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        # Keep latency low: no chain-of-thought for agent replies.
+        "thinking": {"type": "disabled"},
+    }
+
+    response = await _get_client().post(
+        f"{cfg['base_url']}/chat/completions",
+        headers=headers,
+        json=payload,
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Z.ai error {response.status_code}: {response.text[:300]}")
+
+    data = response.json()
+    choices = data.get("choices", [])
+    if not choices:
+        raise RuntimeError("No choices in Z.ai response")
+
+    content = choices[0]["message"]["content"]
+    if content is None:
+        raise RuntimeError("Z.ai returned null content")
+
+    usage = data.get("usage", {})
+    return LLMResponse(
+        content=content,
+        model=data.get("model", cfg["model"]),
         prompt_tokens=usage.get("prompt_tokens", 0),
         completion_tokens=usage.get("completion_tokens", 0),
         total_tokens=usage.get("total_tokens", 0),

@@ -300,6 +300,9 @@ async def _rebuild_profile(db: AsyncSession, tenant: Tenant, counts: dict) -> di
         .where(
             Message.conversation_id.in_(commerce_ids),
             Message.role.in_(("merchant", "assistant", "customer")),
+            # Canned LLM-unavailable apologies are noise for classification,
+            # merchant-voice extraction, and few-shot pairs — skip them all.
+            or_(Message.is_fallback.is_(None), Message.is_fallback == False),  # noqa: E712
         )
         .order_by(Message.created_at.asc())
         .limit(MAX_MSGS_FOR_PROFILE)

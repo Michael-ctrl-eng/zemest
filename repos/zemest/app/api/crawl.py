@@ -44,14 +44,21 @@ async def start_crawl(
     job_id = str(job.id)
     tenant_id = str(tenant.id)
 
-    # Try Celery first (only if a worker is actually running), fallback to BackgroundTasks
+    # Try Celery first (only if a worker is actually running), fallback to BackgroundTasks.
+    # The sync inspect.ping() blocks the event loop (~1s) — it now runs in a
+    # thread AND is skipped entirely when no broker is configured (sandbox).
     celery_dispatched = False
     try:
+        from app.config import get_settings as _gs
+        _broker = (getattr(_gs(), "REDIS_URL", "") or "").strip()
+        if not _broker:
+            raise RuntimeError("no broker configured (REDIS_URL empty)")
+        import asyncio as _asyncio
         from app.tasks.celery_app import celery_app
         # Ping workers with short timeout — if no worker responds, use fallback
         inspect = celery_app.control.inspect(timeout=1)
         try:
-            active_workers = inspect.ping()
+            active_workers = await _asyncio.to_thread(inspect.ping)
         except Exception as ping_err:
             logger.debug(f"Celery ping failed: {ping_err}")
             active_workers = None

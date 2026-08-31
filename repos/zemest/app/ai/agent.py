@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -22,6 +23,10 @@ from app.models.tenant import Tenant
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY_MESSAGES = 10
+
+# Hard ceiling for the whole LLM ladder — a hung upstream must never pin the
+# single event loop (measured worst case before this fix: ~3 minutes).
+LLM_TOTAL_TIMEOUT_SECONDS = 45
 
 
 async def process_customer_message(
@@ -159,12 +164,18 @@ async def process_customer_message(
 
     llm_messages.append({"role": "user", "content": user_content})
 
-    # 9. Call LLM
+    # 9. Call LLM (bounded: a slow/hung provider degrades to fallback instead
+    #    of blocking the single worker for minutes).
     token_info = None
+    llm_ok = False
     try:
-        llm_result = await chat_completion_with_usage(llm_messages)
+        llm_result = await asyncio.wait_for(
+            chat_completion_with_usage(llm_messages),
+            timeout=LLM_TOTAL_TIMEOUT_SECONDS,
+        )
         raw_response = llm_result.content
         token_info = llm_result
+        llm_ok = bool(raw_response and raw_response.strip())
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         raw_response = _get_fallback_response(lang)
@@ -186,13 +197,16 @@ async def process_customer_message(
     # 11. Clean response
     clean_reply = clean_response_for_customer(raw_response)
 
-    # 12. Save assistant message
+    # 12. Save assistant message. Fallback apologies (LLM unavailable) are
+    # persisted with is_fallback=True so BOTH style pipelines skip them —
+    # otherwise the silent trainer literally learns its own failure text.
     assistant_msg = Message(
         id=uuid.uuid4(),
         conversation_id=conversation.id,
         role="assistant",
         content=clean_reply,
         channel=channel,
+        is_fallback=not llm_ok,
     )
     db.add(assistant_msg)
 

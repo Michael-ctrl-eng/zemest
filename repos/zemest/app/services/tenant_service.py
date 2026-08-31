@@ -22,95 +22,130 @@ async def get_user_tenants(db: AsyncSession, user: User) -> list[Tenant]:
 
 
 async def update_tenant(db: AsyncSession, tenant: Tenant, **kwargs) -> Tenant:
+    # kwargs comes from TenantUpdate.model_dump(exclude_unset=True): only
+    # fields the client explicitly sent are present, so None here means
+    # "clear this field" — it must be written, not dropped.
     for key, value in kwargs.items():
-        if value is not None and hasattr(tenant, key):
+        if hasattr(tenant, key):
             setattr(tenant, key, value)
     await db.flush()
     return tenant
 
 
+# --- Stats cache: 20s TTL per tenant. Dashboards re-render from cache
+# instantly; writes converge within 20s. (Was 14 sequential queries on
+# every dashboard home load.)
+import time as _time
+
+_STATS_TTL_SECONDS = 20.0
+_stats_cache: dict = {}
+
+
+def invalidate_tenant_stats(tenant_id) -> None:
+    """Drop the cached stats for a tenant (call after mutations)."""
+    _stats_cache.pop(str(tenant_id), None)
+
+
+
+
+def _today_start():
+    from datetime import datetime as _dt
+    return _dt.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 async def get_tenant_stats(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
+    cache_key = str(tenant_id)
+    hit = _stats_cache.get(cache_key)
+    if hit and (_time.monotonic() - hit[0]) < _STATS_TTL_SECONDS:
+        return hit[1]
+
     from app.models.product import Product
     from app.models.order import Order
     from app.models.conversation import Conversation
 
+    from sqlalchemy import case
+
+    REVENUE_STATUSES = ["confirmed", "shipped", "delivered"]
+
     products_count = await db.scalar(
         select(func.count(Product.id)).where(
-            Product.tenant_id == tenant_id, Product.is_active == True
+            Product.tenant_id == tenant_id, Product.is_active == True  # noqa: E712
         )
     )
-    orders_count = await db.scalar(
-        select(func.count(Order.id)).where(Order.tenant_id == tenant_id)
-    )
-    pending_orders = await db.scalar(
-        select(func.count(Order.id)).where(
-            Order.tenant_id == tenant_id, Order.status == "pending"
+    # One aggregate pass over orders replaces 6 sequential COUNT/SUM queries.
+    orders_row = (
+        await db.execute(
+            select(
+                func.count(Order.id).label("orders_count"),
+                func.coalesce(
+                    func.sum(case((Order.status == "pending", 1), else_=0)), 0
+                ).label("pending_orders"),
+                func.coalesce(
+                    func.sum(case((Order.status.in_(REVENUE_STATUSES), Order.total), else_=0.0)),
+                    0,
+                ).label("total_revenue"),
+                func.coalesce(
+                    func.sum(case((Order.created_at >= _today_start(), 1), else_=0)), 0
+                ).label("today_orders"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (Order.created_at >= _today_start(), Order.total),
+                            (Order.status.in_(REVENUE_STATUSES), 0.0),
+                        )
+                    ),
+                    0,
+                ).label("today_revenue"),
+            ).where(Order.tenant_id == tenant_id)
         )
-    )
+    ).one()
+    orders_count = orders_row.orders_count
+    pending_orders = orders_row.pending_orders
+    total_revenue = orders_row.total_revenue
+    today_orders = int(orders_row.today_orders or 0)
+    today_revenue = float(orders_row.today_revenue or 0)
     active_conversations = await db.scalar(
         select(func.count(Conversation.id)).where(
             Conversation.tenant_id == tenant_id, Conversation.status == "active"
         )
     )
-    total_revenue = await db.scalar(
-        select(func.coalesce(func.sum(Order.total), 0)).where(
-            Order.tenant_id == tenant_id,
-            Order.status.in_(["confirmed", "shipped", "delivered"]),
-        )
-    )
 
-    # Token usage stats
+    # Token usage stats — one aggregate instead of four sequential sums.
     from app.models.token_usage import TokenUsage
 
-    total_tokens_used = await db.scalar(
-        select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
-            TokenUsage.tenant_id == tenant_id
+    tokens_row = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(TokenUsage.total_tokens), 0).label("total"),
+                func.coalesce(
+                    func.sum(case((TokenUsage.usage_type == "chat", TokenUsage.total_tokens))),
+                    0,
+                ).label("chat"),
+                func.coalesce(
+                    func.sum(case((TokenUsage.usage_type == "crawl", TokenUsage.total_tokens))),
+                    0,
+                ).label("crawl"),
+                func.count(TokenUsage.id).label("calls"),
+            ).where(TokenUsage.tenant_id == tenant_id)
         )
-    )
-    chat_tokens = await db.scalar(
-        select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
-            TokenUsage.tenant_id == tenant_id, TokenUsage.usage_type == "chat"
-        )
-    )
-    crawl_tokens = await db.scalar(
-        select(func.coalesce(func.sum(TokenUsage.total_tokens), 0)).where(
-            TokenUsage.tenant_id == tenant_id, TokenUsage.usage_type == "crawl"
-        )
-    )
-    llm_calls = await db.scalar(
-        select(func.count(TokenUsage.id)).where(
-            TokenUsage.tenant_id == tenant_id
-        )
-    )
+    ).one()
+    total_tokens_used = tokens_row.total
+    chat_tokens = tokens_row.chat
+    crawl_tokens = tokens_row.crawl
+    llm_calls = tokens_row.calls
 
-    # Today / month stats
-    from datetime import datetime, timedelta
+    # Month revenue — today's numbers already came from the orders
+    # mega-aggregate above (2 fewer sequential queries).
     from app.models.customer import Customer
     from app.models.order import OrderItem
 
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    month_start = today_start.replace(day=1)
-
-    today_orders = await db.scalar(
-        select(func.count(Order.id)).where(
-            Order.tenant_id == tenant_id,
-            Order.created_at >= today_start,
-        )
-    ) or 0
-
-    today_revenue = await db.scalar(
-        select(func.coalesce(func.sum(Order.total), 0)).where(
-            Order.tenant_id == tenant_id,
-            Order.created_at >= today_start,
-            Order.status.in_(["confirmed", "shipped", "delivered"]),
-        )
-    ) or 0
+    month_start = _today_start().replace(day=1)
 
     month_revenue = await db.scalar(
         select(func.coalesce(func.sum(Order.total), 0)).where(
             Order.tenant_id == tenant_id,
             Order.created_at >= month_start,
-            Order.status.in_(["confirmed", "shipped", "delivered"]),
+            Order.status.in_(REVENUE_STATUSES),
         )
     ) or 0
 
@@ -154,7 +189,7 @@ async def get_tenant_stats(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
         for o in recent_result.scalars().all()
     ]
 
-    return {
+    stats = {
         "products_count": products_count or 0,
         "orders_count": orders_count or 0,
         "pending_orders": pending_orders or 0,
@@ -171,3 +206,5 @@ async def get_tenant_stats(db: AsyncSession, tenant_id: uuid.UUID) -> dict:
         "crawl_tokens": int(crawl_tokens or 0),
         "llm_calls": int(llm_calls or 0),
     }
+    _stats_cache[cache_key] = (_time.monotonic(), stats)
+    return stats

@@ -76,6 +76,9 @@ async function request<T = any>(path: string, options: RequestInit = {}): Promis
   const res = await fetch(`/api/zemest${path}`, {
     ...options,
     credentials: "same-origin",
+    // Bounded request: a hung BFF/backend shows an error instead of an
+    // infinite spinner (30s covers the slowest legitimate LLM endpoints).
+    signal: options.signal ?? AbortSignal.timeout(30_000),
     headers: {
       "Content-Type": "application/json",
       ...options.headers,

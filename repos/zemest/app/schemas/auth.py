@@ -34,5 +34,6 @@ class UserResponse(BaseModel):
     name: str
     email: str | None
     fb_user_id: str | None
+    is_superadmin: bool = False
 
     model_config = {"from_attributes": True}

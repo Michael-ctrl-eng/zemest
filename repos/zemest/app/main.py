@@ -86,6 +86,7 @@ async def lifespan(app: FastAPI):
                 ("customers", "address_detail", "TEXT"),
                 ("messages", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
                 ("messages", "media_urls", "JSON"),
+                ("messages", "is_fallback", "BOOLEAN DEFAULT 0"),
                 ("orders", "api_status", "VARCHAR(20)"),
                 ("orders", "api_response", "TEXT"),
                 ("orders", "api_status_code", "INTEGER"),
@@ -99,6 +100,33 @@ async def lifespan(app: FastAPI):
                     await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}"))
                 except Exception:
                     pass
+
+            # --- SQLite hardening: WAL + busy timeout -----------------------
+            # WAL lets the silent trainer / inline scheduler commit while
+            # read requests proceed (removes read stalls under load).
+            if str(engine.url).startswith("sqlite"):
+                await conn.execute(text("PRAGMA journal_mode=WAL"))
+                await conn.execute(text("PRAGMA busy_timeout=5000"))
+                await conn.execute(text("PRAGMA synchronous=NORMAL"))
+
+            # --- Hot-path indexes (idempotent) --------------------------------
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_orders_tenant_created ON orders(tenant_id, created_at)"))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_conversations_tenant_last_msg ON conversations(tenant_id, last_message_at)"))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id)"))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_conversations_customer ON conversations(customer_id)"))
+            # Meta webhook retry race: a UNIQUE index turns the SELECT-then-
+            # INSERT dedup window into an atomic guarantee (old rows with
+            # duplicate ids, if any, are tolerated — index is only created
+            # when it can be; failures are non-fatal).
+            try:
+                await conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_fb_message_id_unique ON messages(fb_message_id) WHERE fb_message_id IS NOT NULL"))
+            except Exception:
+                _mlog.getLogger("app.main").warning("Could not create unique fb_message_id index (existing duplicates?)")
 
             # Auto-create admin tables if missing (idempotent — safe for SQLite tests too)
             try:
