@@ -94,11 +94,28 @@ limiter: Limiter | None = None
 
 
 def _build_limiter() -> "Limiter":
-    """Construct the slowapi Limiter, preferring Redis if configured."""
+    """Construct the slowapi Limiter, preferring Redis if configured.
+
+    Probes Redis ONCE at construction; if it's unreachable we permanently
+    fall back to the in-memory store so a dead Redis can never 500 requests
+    (the docstring promised fail-open — this makes it real).
+    """
     if not _SLOWAPI_AVAILABLE:
         raise RuntimeError("slowapi is not installed — add it to requirements.txt")
 
     storage_uri = settings.REDIS_URL or "memory://"
+    if storage_uri.startswith("redis://"):
+        try:
+            import redis as _redis
+
+            client = _redis.Redis.from_url(storage_uri, socket_connect_timeout=1.0)
+            client.ping()
+        except Exception:  # noqa: BLE001 — Redis optional, fail open to memory
+            logger.warning(
+                "Redis at %s unreachable — rate limiter falling back to in-memory storage",
+                storage_uri,
+            )
+            storage_uri = "memory://"
     return Limiter(key_func=get_rate_limit_key, storage_uri=storage_uri)
 
 

@@ -369,6 +369,87 @@ export const addressApi = {
     api.get<any>(`/address/shipping?governorate=${encodeURIComponent(governorate)}&subtotal=${subtotal}`),
 };
 
+// ---------- Channels (Messenger / Instagram / WhatsApp) ----------
+
+export interface ChannelStatus {
+  connected: boolean;
+  error: string | null;
+  // present when connected
+  page_id?: string;
+  ig_user_id?: string;
+  phone_number_id?: string;
+  account_name?: string | null;
+  avatar?: string | null;
+  category?: string | null;
+  followers?: number | null;
+  display_phone_number?: string | null;
+  verified_name?: string | null;
+  quality_rating?: string | null;
+  connected_at?: string | null;
+}
+
+export interface ChannelsStatus {
+  platforms: { messenger: ChannelStatus; instagram: ChannelStatus; whatsapp: ChannelStatus };
+  webhook_urls: { messenger: string; instagram: string; whatsapp: string };
+  verify_token_configured: boolean;
+  oauth: { ready: boolean };
+}
+
+export const channelsApi = {
+  status: (tenantId: string) => api.get<ChannelsStatus>(`/tenants/${tenantId}/channels`),
+  connectMessenger: (tenantId: string, pageAccessToken: string, pageId?: string) =>
+    api.post<{ connected: boolean; page_name?: string; webhook_subscribed: boolean; webhook_note?: string | null }>(
+      `/tenants/${tenantId}/channels/messenger`,
+      { page_access_token: pageAccessToken, page_id: pageId || null }
+    ),
+  connectInstagram: (tenantId: string, igUserId: string, accessToken: string) =>
+    api.post<{ connected: boolean; username?: string }>(`/tenants/${tenantId}/channels/instagram`, {
+      ig_user_id: igUserId,
+      access_token: accessToken,
+    }),
+  connectWhatsapp: (tenantId: string, phoneNumberId: string, accessToken: string) =>
+    api.post<{ connected: boolean; display_phone_number?: string; verified_name?: string }>(
+      `/tenants/${tenantId}/channels/whatsapp`,
+      { phone_number_id: phoneNumberId, access_token: accessToken }
+    ),
+  disconnect: (tenantId: string, platform: string) =>
+    api.delete<{ connected: boolean }>(`/tenants/${tenantId}/channels/${platform}`),
+  test: (tenantId: string, platform: string, text?: string) =>
+    api.post<Record<string, unknown>>(`/tenants/${tenantId}/channels/${platform}/test`, { text }),
+};
+
+// ---------- Scheduler (posts) + Calendar ----------
+
+export interface ScheduledPostItem {
+  id: string;
+  platform: string;
+  caption: string;
+  media_type: string;
+  media_urls: string[];
+  scheduled_at: string;
+  published_at: string | null;
+  status: string;
+  platform_post_id: string | null;
+  error_message: string | null;
+  ai_generated: boolean;
+}
+
+export const schedulerApi = {
+  list: (tenantId: string) => api.get<{ posts: ScheduledPostItem[]; total: number }>(`/tenants/${tenantId}/schedule/posts`),
+  create: (
+    tenantId: string,
+    data: { platform: string; caption: string; media_type?: string; media_urls?: string[]; link?: string; scheduled_at: string }
+  ) => api.post<{ id: string; status: string; scheduled_at: string; platform: string }>(`/tenants/${tenantId}/schedule/post`, data),
+  cancel: (tenantId: string, postId: string) =>
+    api.patch<{ status: string }>(`/tenants/${tenantId}/schedule/posts/${postId}/status`, { status: "cancelled" }),
+  remove: (tenantId: string, postId: string) => api.delete<{ status: string }>(`/tenants/${tenantId}/schedule/posts/${postId}`),
+};
+
+export const calendarApi = {
+  url: (tenantId: string) => api.get<{ calendar_token: string }>(`/tenants/${tenantId}/calendar/url`),
+  rotate: (tenantId: string) => api.post<{ calendar_token: string }>(`/tenants/${tenantId}/calendar/token`),
+};
+
 export const authApi = {
   // These go through the dedicated BFF auth routes (they set the cookie)
   login: async (email: string, password: string, remember = false) => {

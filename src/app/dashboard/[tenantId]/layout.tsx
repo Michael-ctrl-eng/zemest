@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   MessageSquare,
+  Radio,
   Package,
   ShoppingCart,
   Users,
@@ -24,6 +25,7 @@ import { MobileSidebar } from "@/components/site/mobile-sidebar";
 const sidebarItems = [
   { label: "Overview", href: "", icon: LayoutDashboard },
   { label: "Chat", href: "/chat", icon: MessageSquare },
+  { label: "Channels", href: "/channels", icon: Radio },
   { label: "Products", href: "/products", icon: Package },
   { label: "Orders", href: "/orders", icon: ShoppingCart },
   { label: "Customers", href: "/customers", icon: Users },

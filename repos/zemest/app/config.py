@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     POSTIZ_EMAIL: str = ""
     POSTIZ_PASSWORD: str = ""
 
+    # In-process scheduler worker (true = publish due posts inside uvicorn;
+    # set false when Celery+Redis beat is deployed to avoid double publishing)
+    SCHEDULER_INLINE_WORKER: bool = True
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

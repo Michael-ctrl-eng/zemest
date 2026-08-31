@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
   MessageSquare,
+  Radio,
   Package,
   ShoppingCart,
   Users,
@@ -24,6 +25,7 @@ import {
 const sidebarItems = [
   { label: "Overview", href: "", icon: LayoutDashboard },
   { label: "Chat", href: "/chat", icon: MessageSquare },
+  { label: "Channels", href: "/channels", icon: Radio },
   { label: "Products", href: "/products", icon: Package },
   { label: "Orders", href: "/orders", icon: ShoppingCart },
   { label: "Customers", href: "/customers", icon: Users },

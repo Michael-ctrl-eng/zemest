@@ -60,6 +60,10 @@ async def lifespan(app: FastAPI):
                 ("tenants", "wa_access_token", "TEXT"),
                 ("tenants", "wa_waba_id", "VARCHAR(64)"),
                 ("tenants", "owner_psid", "VARCHAR(64)"),
+                ("tenants", "messenger_meta", "JSON"),
+                ("tenants", "instagram_meta", "JSON"),
+                ("tenants", "whatsapp_meta", "JSON"),
+                ("tenants", "calendar_token", "VARCHAR(64)"),
                 ("customers", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
                 ("customers", "governorate", "VARCHAR(100)"),
                 ("customers", "city", "VARCHAR(100)"),
@@ -171,6 +175,11 @@ async def lifespan(app: FastAPI):
         await close_client()
     except Exception:
         pass
+    try:
+        from app.tasks.inline_worker import stop_inline_scheduler
+        stop_inline_scheduler()
+    except Exception:
+        pass
     await engine.dispose()
 
 
@@ -249,6 +258,15 @@ templates = Jinja2Templates(directory="dashboard/templates")
 from app.api.router import api_router  # noqa: E402
 
 app.include_router(api_router)
+
+# Inline scheduler worker — publishes due posts inside this process
+# (Celery+Redis optional; this deployment uses the in-process loop).
+try:
+    from app.tasks.inline_worker import start_inline_scheduler  # noqa: E402
+    start_inline_scheduler(app)
+except Exception:  # noqa: BLE001
+    import logging as _wlog
+    _wlog.getLogger(__name__).warning("Inline scheduler worker failed to start", exc_info=True)
 
 # Register admin REST API (block/unblock/ip-bans/analytics/audit-log).
 # Must be included BEFORE setup_admin so the routes exist regardless of

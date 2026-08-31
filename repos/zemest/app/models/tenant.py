@@ -33,6 +33,14 @@ class Tenant(Base):
     wa_access_token: Mapped[Optional[str]] = mapped_column(Text)
     wa_waba_id: Mapped[Optional[str]] = mapped_column(String(64))
 
+    # --- Channel connection metadata (account display info + connect time) ---
+    messenger_meta: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+    instagram_meta: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+    whatsapp_meta: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+
+    # --- Calendar subscription (ICS feed auth token) ---
+    calendar_token: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True)
+
     # --- Business info ---
     website_url: Mapped[Optional[str]] = mapped_column(String(512))
     business_phone: Mapped[Optional[str]] = mapped_column(String(20))

@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import timezone
 
 from app.database import get_db
 from app.dependencies import get_tenant
@@ -75,7 +76,13 @@ async def schedule_post(
     if req.platform not in ("facebook", "instagram"):
         raise HTTPException(status_code=422, detail="Platform must be 'facebook' or 'instagram'")
 
-    if req.scheduled_at <= datetime.utcnow():
+    # Normalize to naive UTC — clients send ISO strings with 'Z' (offset-aware),
+    # the DB stores naive UTC. Accept both forms.
+    scheduled_at = req.scheduled_at
+    if scheduled_at.tzinfo is not None:
+        scheduled_at = scheduled_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+    if scheduled_at <= datetime.utcnow():
         raise HTTPException(status_code=422, detail="scheduled_at must be in the future")
 
     # Validate media requirements
@@ -93,7 +100,7 @@ async def schedule_post(
         media_urls=req.media_urls,
         media_type=req.media_type,
         link=req.link,
-        scheduled_at=req.scheduled_at,
+        scheduled_at=scheduled_at,
         status="scheduled",
         ai_generated=req.ai_generated,
     )
