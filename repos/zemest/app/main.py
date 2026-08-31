@@ -191,9 +191,16 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_login_at ON user_sessions(login_at)"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_sessions_active ON user_sessions(is_active)"))
 
-                await conn.execute(text("""
+                # SQLite: only "INTEGER PRIMARY KEY" auto-assigns (rowid alias);
+                # BIGSERIAL works on Postgres. BIGINT PKs silently break inserts on SQLite.
+                _audit_id = (
+                    "INTEGER PRIMARY KEY AUTOINCREMENT"
+                    if str(engine.url).startswith("sqlite")
+                    else "BIGSERIAL PRIMARY KEY"
+                )
+                await conn.execute(text(f"""
                     CREATE TABLE IF NOT EXISTS admin_audit_log (
-                        id BIGSERIAL PRIMARY KEY,
+                        id {_audit_id},
                         admin_id UUID NOT NULL REFERENCES users(id),
                         action VARCHAR(64) NOT NULL,
                         target_type VARCHAR(32),

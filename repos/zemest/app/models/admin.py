@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -42,10 +42,15 @@ class UserSession(Base):
 
 
 class AuditLog(Base):
-    """Append-only audit log of admin actions."""
+    """Append-only audit log of admin actions.
+
+    ``id`` MUST be ``Integer`` (not ``BigInteger``): on SQLite only an
+    INTEGER PRIMARY KEY is a rowid alias and auto-assigns ids — BIGINT PKs
+    make every INSERT fail with NOT NULL (id) on SQLite.
+    """
     __tablename__ = "admin_audit_log"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     admin_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     action: Mapped[str] = mapped_column(String(64))  # user.block, ip.ban, user.unblock, etc.
     target_type: Mapped[Optional[str]] = mapped_column(String(32))  # user, ip, tenant

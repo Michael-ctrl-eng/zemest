@@ -129,6 +129,8 @@ export const api = {
   },
   /** GET + cache. Components seed state with api.peek() for instant paint. */
   get: <T = any>(path: string) => cachedGet<T>(path),
+  /** GET that bypasses the cache — for health probes where a real round-trip (and its latency) is the point. */
+  getFresh: <T = any>(path: string) => request<T>(path),
   /** Background fetch that only warms the cache (hover-prefetch). Fire-and-forget. */
   prefetch: (path: string) => {
     void cachedGet(path).catch(() => undefined);
@@ -154,6 +156,7 @@ export const api = {
 export interface Tenant {
   id: string;
   page_name: string;
+  fb_page_id?: string | null;
   website_url: string | null;
   business_phone: string | null;
   business_email: string | null;
@@ -453,6 +456,113 @@ export const calendarApi = {
   rotate: (tenantId: string) => api.post<{ calendar_token: string }>(`/tenants/${tenantId}/calendar/token`),
 };
 
+// ---------- Admin panel (superadmin endpoints, proxied via /api/zemest/admin/*) ----------
+
+export interface AdminOverview {
+  total_users: number;
+  total_tenants: number;
+  total_orders: number;
+  active_sessions: number;
+  blocked_users: number;
+  ip_bans: number;
+  total_tokens_used: number;
+}
+
+export interface AdminAuditLogItem {
+  id: number;
+  admin_id: string;
+  action: string; // "user.block" | "user.unblock" | "ip.ban" | "ip.unban" | …
+  target_type: string | null;
+  target_id: string | null;
+  ip: string | null;
+  created_at: string;
+}
+
+export interface AdminAuditLogResponse {
+  logs: AdminAuditLogItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface AdminIPBan {
+  id: string;
+  ip_or_cidr: string;
+  reason: string | null;
+  created_at: string;
+}
+
+export interface AdminActiveSession {
+  id: string;
+  user_id: string;
+  ip_address: string;
+  country: string | null;
+  city: string | null;
+  device_type: string | null;
+  last_activity: string;
+}
+
+export interface AdminUserActivityItem {
+  id: string;
+  ip_address: string;
+  country: string | null;
+  city: string | null;
+  device_type: string | null;
+  browser: string | null;
+  login_at: string;
+  last_activity: string;
+  is_active: boolean;
+}
+
+export interface AdminGeoItem {
+  country: string;
+  user_count: number;
+}
+
+export const adminApi = {
+  overview: () => api.get<AdminOverview>("/admin/analytics/overview"),
+  /** Uncached probe (health checks / superadmin gate fallback) — always hits the backend. */
+  overviewProbe: () => api.getFresh<AdminOverview>("/admin/analytics/overview"),
+  auditLog: (page = 1, pageSize = 50) =>
+    api.get<AdminAuditLogResponse>(`/admin/audit-log?page=${page}&page_size=${pageSize}`),
+  ipBans: () => api.get<AdminIPBan[]>("/admin/ip-bans"),
+  addIpBan: (ipOrCidr: string, reason?: string | null) =>
+    api.post<{ status: string; ip_or_cidr: string }>("/admin/ip-bans", {
+      ip_or_cidr: ipOrCidr,
+      reason: reason ?? null,
+    }),
+  removeIpBan: (id: string) =>
+    api.delete<{ status: string; ip_or_cidr: string }>(`/admin/ip-bans/${id}`),
+  activeSessions: () => api.get<AdminActiveSession[]>("/admin/analytics/active-sessions"),
+  userActivity: (userId: string) =>
+    api.get<AdminUserActivityItem[]>(`/admin/analytics/user/${userId}/activity`),
+  geoDistribution: () => api.get<AdminGeoItem[]>("/admin/analytics/geo-distribution"),
+  blockUser: (userId: string, reason?: string | null) =>
+    api.post<{ status: string; user_id: string }>(`/admin/users/${userId}/block`, {
+      reason: reason ?? null,
+    }),
+  unblockUser: (userId: string) =>
+    api.delete<{ status: string; user_id: string }>(`/admin/users/${userId}/block`),
+};
+
+/** Human-friendly message for a thrown ApiError (403 gets a clear access-denied text). */
+export function apiErrorMessage(err: unknown, fallback = "Failed to load data"): string {
+  if (err instanceof ApiError) {
+    if (err.status === 403) return "Access denied — this page requires superadmin privileges.";
+    return err.detail || `Request failed (${err.status})`;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
+export interface Me {
+  id: string;
+  name: string;
+  email: string | null;
+  fb_user_id: string | null;
+  is_superadmin: boolean;
+}
+
 export const authApi = {
   // These go through the dedicated BFF auth routes (they set the cookie)
   login: async (email: string, password: string, remember = false) => {
@@ -479,5 +589,5 @@ export const authApi = {
     }
     return res.json();
   },
-  me: () => api.get<{ id: string; name: string; email: string | null }>("/auth/me"),
+  me: () => api.get<Me>("/auth/me"),
 };

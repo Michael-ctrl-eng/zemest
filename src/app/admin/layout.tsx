@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   Users,
@@ -13,6 +14,7 @@ import {
   Activity,
   ArrowLeft,
 } from "lucide-react";
+import { authApi, adminApi, ApiError } from "@/lib/zemest-api";
 
 const sidebarItems = [
   { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
@@ -27,6 +29,34 @@ const sidebarItems = [
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [allowed, setAllowed] = useState(false);
+
+  // Superadmin gate: /auth/me decides when it reports is_superadmin. Older
+  // daemon builds always report false there, so fall back to a real
+  // admin-authorized probe (GET /admin/analytics/overview — 200 = superadmin,
+  // 403 = everyone else) before allowing the section to render.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await authApi.me();
+        if (me?.is_superadmin) {
+          if (!cancelled) setAllowed(true);
+          return;
+        }
+        await adminApi.overview();
+        if (!cancelled) setAllowed(true);
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 401) return; // request() already redirects to /login
+        router.replace("/dashboard");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   return (
     <div className="min-h-screen bg-grain">
@@ -67,7 +97,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Main content */}
         <main className="flex-1 min-w-0 p-5 sm:p-8">
-          {children}
+          {allowed ? children : null}
         </main>
       </div>
     </div>

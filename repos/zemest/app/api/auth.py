@@ -62,4 +62,5 @@ async def get_me(user=Depends(get_current_user)):
         name=user.name,
         email=user.email,
         fb_user_id=user.fb_user_id,
+        is_superadmin=bool(user.is_superadmin),
     )
