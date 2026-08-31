@@ -61,6 +61,10 @@ class Tenant(Base):
     knowledge_base: Mapped[Optional[list]] = mapped_column(JSON, default=None)
     knowledge_built_at: Mapped[Optional[datetime]] = mapped_column(default=None)
 
+    # --- Silent trainer checkpoint (epochs, maturity, error backoff,
+    # resume state). Written only by the background trainer. ---
+    training_state: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+
     # --- External order API config ---
     order_api_config: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
 

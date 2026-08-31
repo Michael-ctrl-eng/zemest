@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,6 +7,13 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import get_settings
+
+# Route app-level logs to stderr (the daemon redirects stderr to backend.log)
+# so workers/lifespan failures are actually visible to the operator.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 settings = get_settings()
 
@@ -25,6 +33,7 @@ async def lifespan(app: FastAPI):
             "and set it in the environment before starting the server."
         )
     # Startup — auto-create missing tables
+    import logging as _mlog
     from sqlalchemy import text
     from app.database import engine
     try:
@@ -38,7 +47,7 @@ async def lifespan(app: FastAPI):
                     prompt_tokens INTEGER DEFAULT 0,
                     completion_tokens INTEGER DEFAULT 0,
                     total_tokens INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT NOW()
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_token_usage_tenant ON token_usage(tenant_id)"))
@@ -64,6 +73,12 @@ async def lifespan(app: FastAPI):
                 ("tenants", "instagram_meta", "JSON"),
                 ("tenants", "whatsapp_meta", "JSON"),
                 ("tenants", "calendar_token", "VARCHAR(64)"),
+                ("tenants", "training_state", "JSON"),
+                ("conversations", "classification", "VARCHAR(20)"),
+                ("conversations", "classification_score", "FLOAT"),
+                ("conversations", "classification_signals", "JSON"),
+                ("conversations", "classified_at", "TIMESTAMP"),
+                ("conversations", "classified_by", "VARCHAR(16)"),
                 ("customers", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
                 ("customers", "governorate", "VARCHAR(100)"),
                 ("customers", "city", "VARCHAR(100)"),
@@ -104,8 +119,8 @@ async def lifespan(app: FastAPI):
                         last_user_agent TEXT,
                         last_device_type VARCHAR(32),
                         last_seen TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT NOW(),
-                        updated_at TIMESTAMP DEFAULT NOW()
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_site_users_user_id ON site_users(user_id)"))
@@ -119,7 +134,7 @@ async def lifespan(app: FastAPI):
                         ip_or_cidr VARCHAR(64) NOT NULL UNIQUE,
                         reason TEXT,
                         banned_by UUID NOT NULL REFERENCES users(id),
-                        created_at TIMESTAMP DEFAULT NOW()
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ip_bans_ip_or_cidr ON ip_bans(ip_or_cidr)"))
@@ -136,9 +151,9 @@ async def lifespan(app: FastAPI):
                         longitude DOUBLE PRECISION,
                         user_agent TEXT,
                         device_type VARCHAR(32),
-                        login_at TIMESTAMP DEFAULT NOW(),
+                        login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         logout_at TIMESTAMP,
-                        last_activity TIMESTAMP DEFAULT NOW(),
+                        last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         is_active BOOLEAN DEFAULT TRUE
                     )
                 """))
@@ -157,7 +172,7 @@ async def lifespan(app: FastAPI):
                         target_id VARCHAR(64),
                         metadata_ JSON,
                         ip VARCHAR(64),
-                        created_at TIMESTAMP DEFAULT NOW()
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_admin_id ON admin_audit_log(admin_id)"))
@@ -165,9 +180,12 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_target_id ON admin_audit_log(target_id)"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON admin_audit_log(created_at)"))
             except Exception:
-                pass  # SQLite / older Postgres may not support some types — ignore
+                _mlog.getLogger("app.main").warning(
+                    "Optional admin-table migration skipped (SQLite/older PG)", exc_info=True
+                )
     except Exception:
-        pass  # DB may not be ready yet
+        # DB may not be ready yet — but never SILENTLY: the operator must see it
+        _mlog.getLogger("app.main").error("Startup migration block failed", exc_info=True)
     yield
     # Shutdown
     try:
@@ -178,6 +196,11 @@ async def lifespan(app: FastAPI):
     try:
         from app.tasks.inline_worker import stop_inline_scheduler
         stop_inline_scheduler()
+    except Exception:
+        pass
+    try:
+        from app.tasks.training_worker import stop_inline_trainer
+        stop_inline_trainer()
     except Exception:
         pass
     await engine.dispose()
@@ -267,6 +290,15 @@ try:
 except Exception:  # noqa: BLE001
     import logging as _wlog
     _wlog.getLogger(__name__).warning("Inline scheduler worker failed to start", exc_info=True)
+
+# Silent trainer worker — classifies junk vs commerce chats and builds each
+# page's style profile automatically, invisibly, with crash-safe resume.
+try:
+    from app.tasks.training_worker import start_inline_trainer  # noqa: E402
+    start_inline_trainer(app)
+except Exception:  # noqa: BLE001
+    import logging as _tlog
+    _tlog.getLogger(__name__).warning("Silent trainer worker failed to start", exc_info=True)
 
 # Register admin REST API (block/unblock/ip-bans/analytics/audit-log).
 # Must be included BEFORE setup_admin so the routes exist regardless of

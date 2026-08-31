@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # set false when Celery+Redis beat is deployed to avoid double publishing)
     SCHEDULER_INLINE_WORKER: bool = True
 
+    # In-process silent trainer (true = background self-training loop that
+    # classifies junk vs commerce chats and builds the page's style profile
+    # with zero user interaction; set false when training moves to Celery)
+    SILENT_TRAINER_INLINE_WORKER: bool = True
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

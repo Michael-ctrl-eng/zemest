@@ -1,7 +1,8 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, DateTime, Float, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -17,6 +18,14 @@ class Conversation(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")
     started_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
     last_message_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
+
+    # --- Silent trainer: junk (friend chat) vs work (commerce) classification.
+    # Written automatically by app.ai.silent_trainer — never by the user. ---
+    classification: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # commerce|junk|mixed
+    classification_score: Mapped[Optional[float]] = mapped_column(Float, default=None)
+    classification_signals: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
+    classified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+    classified_by: Mapped[Optional[str]] = mapped_column(String(16), default=None)
 
     tenant = relationship("Tenant", back_populates="conversations")
     customer = relationship("Customer", back_populates="conversations")

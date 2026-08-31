@@ -110,28 +110,87 @@ def get_system_prompt(
         pay_lines.append(f"فوري: {pay['fawry']}")
     pay_info = "\n   ".join(pay_lines) if pay_lines else "طرق الدفع: كاش عند التوصيل (COD)"
 
-    # Style profile injection
+    # Style profile injection — consumes the rich profile built by the
+    # silent trainer (app/ai/silent_trainer.py) and stays compatible with
+    # the legacy manual style learner's keys.
     style_lines = []
+    buyer_lines = []
+    exemplar_blocks = []
     if style_profile:
         tone = style_profile.get("tone", "friendly")
-        greeting = style_profile.get("greeting_pattern", "")
-        signoff = style_profile.get("signoff_pattern", "")
+        greetings = style_profile.get("greeting_patterns") or (
+            [style_profile["greeting_pattern"]] if style_profile.get("greeting_pattern") else []
+        )
+        signoffs = style_profile.get("signoff_patterns") or (
+            [style_profile["signoff_pattern"]] if style_profile.get("signoff_pattern") else []
+        )
         emoji_use = style_profile.get("emoji_use", 0.0)
+        formality = style_profile.get("formality_level", 5)
+        avg_chars = style_profile.get("avg_length_chars", 0)
+        vocab = (style_profile.get("vocabulary") or [])[:8]
 
-        if greeting:
-            style_lines.append(f"- ابدأ بـ: \"{greeting}\"")
-        if signoff:
-            style_lines.append(f"- انتهِ بـ: \"{signoff}\"")
+        if greetings:
+            greet_opts = '" أو "'.join(greetings[:3])
+            style_lines.append(f'- ابدأ بأسلوبك المعتاد زي: "{greet_opts}"')
+        if signoffs:
+            signoff_opts = '" أو "'.join(signoffs[:3])
+            style_lines.append(f'- اقفل الكلام بـ: "{signoff_opts}"')
         if emoji_use > 0.2:
-            style_lines.append("- استخدم إيموجي بشكل طبيعي")
+            style_lines.append("- استخدم إيموجي بشكل طبيعي زي ما بتعمل كده")
+        elif emoji_use == 0.0:
+            style_lines.append("- من غير إيموجي — ده أسلوب الصفحة")
         if tone == "formal":
             style_lines.append("- نبرة رسمية ومحترمة")
         elif tone == "friendly":
             style_lines.append("- نبرة ودودة ودافئة")
         else:
             style_lines.append("- نبرة عادية ومباشرة")
+        if isinstance(formality, (int, float)) and formality >= 7:
+            style_lines.append('- استخدم "حضرتك" و احترم المسافة المهنية')
+        if isinstance(avg_chars, (int, float)) and avg_chars > 0:
+            style_lines.append(f"- طول ردك المعتاد حوالي {int(avg_chars)} حرف — التزم بنفس الطول تقريباً")
+        if vocab:
+            style_lines.append(f"- من مفرداتك المعتادة: {', '.join(vocab)}")
+        if style_profile.get("objection_handling"):
+            style_lines.append(f"- في الاعتراضات: {style_profile['objection_handling']}")
+        if style_profile.get("sales_tactics"):
+            tactics = style_profile["sales_tactics"]
+            if isinstance(tactics, list) and tactics:
+                style_lines.append(f"- تكتيكات البيع عندك: {'؛ '.join(str(t) for t in tactics[:3])}")
+
+        # --- buyer persona: how this page's customers actually talk ---
+        buyer = style_profile.get("buyer_persona") or {}
+        if buyer.get("language_mix"):
+            mix = buyer["language_mix"]
+            parts = "، ".join(f"{int(round(v * 100))}% {k}" for k, v in mix.items())
+            buyer_lines.append(f"- عملاء الصفحة بيكتبوا: {parts}")
+        if buyer.get("dialects"):
+            dialects = "، ".join(f"{int(round(v * 100))}% {k}" for k, v in buyer["dialects"].items())
+            buyer_lines.append(f"- لهجاتهم: {dialects}")
+        if buyer.get("franco_ratio", 0) and buyer["franco_ratio"] >= 0.15:
+            buyer_lines.append("- فيهم ناس بتكتب فرانكو (عربي بحروف إنجليزي) — افهمهم ولو مناسب رد بنفس أسلوبهم")
+        if buyer.get("top_openers"):
+            openers = " / ".join(f"\"{o}\"" for o in buyer["top_openers"][:3])
+            buyer_lines.append(f"- أول كلامهم غالباً: {openers}")
+        if buyer.get("avg_message_chars"):
+            buyer_lines.append(f"- رسائلهم قصيرة (متوسط {int(buyer['avg_message_chars'])} حرف) — ردودك لازم تكون أخف وأسرع")
+
+        # --- few-shot exemplars: real (customer → page reply) pairs ---
+        for i, ex in enumerate((style_profile.get("exemplars") or [])[:3], 1):
+            exemplar_blocks.append(
+                f"مشهد {i}:\nالعميل: {ex.get('customer', '')}\nرد الصفحة: {ex.get('reply', '')}"
+            )
 
     style_text = "\n".join(style_lines) if style_lines else "- نبرة ودودة ومحترمة"
+    buyer_text = (
+        "\n## عملاء الصفحة (اتعلمت من محادثاتهم الحقيقية)\n" + "\n".join(buyer_lines) + "\n"
+        if buyer_lines else ""
+    )
+    exemplar_text = (
+        "\n## ردود الصفحة الحقيقية (اقلدها في الروح والطول مش بالحرف)\n"
+        + "\n\n".join(exemplar_blocks) + "\n"
+        if exemplar_blocks else ""
+    )
 
     return f"""أنت بائع محترف وذكي لصفحة "{business_name}" على فيسبوك. {intro_line}
 
@@ -139,7 +198,7 @@ def get_system_prompt(
 
 ## شخصيتك
 {style_text}
-
+{buyer_text}{exemplar_text}
 ## القواعد الصارمة
 - {lang_rule}
 - NEVER تقول "آسف" أو "مقدرش" أو "مش عارف" — دايماً عندك حل أو اقتراح
