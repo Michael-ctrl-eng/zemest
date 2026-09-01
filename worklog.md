@@ -1379,3 +1379,20 @@ Work Log:
 Stage Summary:
 - REAL LLM verified: 3/3 required messages answered by glm-4-plus in Egyptian Arabic (0.9–1.2 s), token_usage rows per call, all persisted is_fallback=0; trainer fired correctly with is_fallback filter working
 - Top issues: bad tenant_id → 500 unhandled ValueError; empty/whitespace message → guaranteed English fallback apology persisted; NO product grounding (knowledge_bases empty, no products-table fallback) → agent invents prices (750 vs real 1850) AND trainer bakes the hallucination into few-shot exemplars (self-reinforcing); current message duplicated in every LLM prompt (autoflush); tokens_used misattributed (stale on fallback); test/playground traffic trains the style profile; concurrent messages cross-wire exemplar pairs
+
+---
+Task ID: 20
+Agent: main-orchestrator
+Task: Run 20-subagent fleet (10 GitHub research R1-R10 + 10 error hunters E1-E10); verify platform works end-to-end
+
+Work Log:
+- Restored platform after sandbox reset: reinstalled Python deps into /home/z/.venv (disk-full twice: purged 3GB pip cache, skipped torch/camel-tools optional heavy deps), patched daemon_backend.py to fall back to any uvicorn on PATH, auto-bootstraps DB when schema wiped, tries 3 python paths in backend-health.ts
+- Rebuilt zemest_local.db via bootstrap_local.py (demo owner + tenant + 3 products); login verified 200 via BFF :3000 (1.04s) and :8000 direct
+- Launched 20 subagents in parallel; 11 rate-limited (upstream 429), relaunched in 3 batches — all 20 completed
+- Consolidated: all 20 worklog entries verified present, 20 reports in analysis/
+- Committed 370163a (push still blocked: rotate exposed PAT)
+
+Stage Summary:
+- PLATFORM VERDICT: WORKS. 63/66 backend routes pass live (E1), 45/45 frontend→backend calls correctly wired with ZERO path/shape mismatches (E4), real LLM replies in Egyptian Arabic 0.9-1.2s (E9), silent trainer fires ≤45s after message batches with correct is_fallback filtering (E9), JWT/auth core solid: forged/tampered/expired tokens all rejected (E3), 20/22 dashboard+admin pages on real data (E5), channel connect validate-before-store REAL with live Graph calls (E6)
+- TOP ERRORS TO FIX (ranked): (1) X-Forwarded-For rate-limit bypass via BFF proxy [E2/E3]; (2) address governorate exact-match mischarges shipping: "Cairo" bills outside rate [E1]; (3) hallucination loop: empty knowledge_bases → invented prices baked into style exemplars [E9]; (4) fetchWithHeal re-POSTs non-idempotent requests on timeout [E2]; (5) register page is dead form [E3]; (6) webhook URL in channels UI 404s (Next origin path) [E6]; (7) Meta access tokens logged plaintext in backend.log [E6]; (8) alembic fully drifted (11/18 tables) [E8]; (9) uuid 500 + empty-message apology persisted [E9]; (10) only 4/92 routes rate-limited [E1]; (11) next-server RAM 1.74GB climbing [E10]; (12) tsc PageSectionProps + ignoreBuildErrors masking [E7]; (13) 41 orphan backend routes incl. oauth-url never called [E4]; (14) style page mock while backend has real data [E5]; (15) chat/conversations pages 100% mock [E7/R7]
+- TOP RESEARCH PICKS: Huey (SQLite-native durable jobs, replaces ARQ plan) [R3]; sqlite-vec (verified live in our exact stack) + FTS5 Arabic normalizer [R8]; arctic + authlib for real Meta OAuth [R1]; llama.cpp --lora per-tenant adapters + PEFT resume checkpoints [R4]; fasttext-numpy2-wheel (fixes live numpy crash) + sklearn partial_fit online classifier [R5]; APScheduler + icalendar [R6]; SSE via sse-starlette + wire installed-but-unused TanStack Query [R7/R9]; schemathesis + playwright + structlog wiring suite aimed at :3000 [R10]; bore tunnel for Meta webhooks [R2]
