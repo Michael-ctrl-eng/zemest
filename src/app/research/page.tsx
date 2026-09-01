@@ -6,38 +6,38 @@ import { ArrowUpRight } from "lucide-react";
 export const metadata = { title: "Zemest Research: Pioneering Conversational Commerce" };
 
 const researchAreas = [
-  { label: "PERCEPTION", title: "Multimodal", desc: "Understanding meaning beyond words. Tone, timing, intent, and everything unsaid." },
-  { label: "LISTENING", title: "Awareness", desc: "Teaching machines to truly listen. Not just to sounds, but to emotion, cadence, and rhythm." },
-  { label: "AGENCY", title: "Thinking", desc: "Building systems that act with awareness, not automation. Capable of response, reasoning, and restraint." },
-  { label: "VOICE", title: "Expression", desc: "Synthesizing voice that carries emotion, not just words. Warmth, hesitation, humor, humanity." },
-  { label: "MOTION", title: "Rendering", desc: "Turning intelligence into motion. Seamless, lifelike expression that feels natural and alive." },
-  { label: "DIALOGUE", title: "Conversation", desc: "Making dialogue intuitive and human. Conversations that adapt, remember, and build trust over time." },
+  { label: "DIALECT", title: "Register matching", desc: "Detecting the dialect of the first message in under 50ms, so every reply speaks the buyer's variety — not textbook MSA." },
+  { label: "LISTENING", title: "Voice understanding", desc: "Transcribing Egyptian and Gulf voice notes with their code-switching, street noise, and four-second brevity intact." },
+  { label: "PERCEPTION", title: "Image grounding", desc: "Matching the screenshot a buyer sends to the catalog behind it — the shoe, the price list, the blurry in-store photo." },
+  { label: "GROUNDING", title: "Fact discipline", desc: "Constraining every price and availability claim to the live inventory record, so confidence never outruns the truth." },
+  { label: "MEMORY", title: "Style learning", desc: "Studying how a seller actually writes — phrasing, warmth, shorthand — and folding that voice into the agent over time." },
+  { label: "EVALUATION", title: "Conversation science", desc: "Measuring what matters in a sales chat: not fluency scores, but whether the reply kept the conversation moving to an order." },
 ];
 
 const traits = [
-  { label: "EXPRESSIVE", title: "(and authentic)", desc: "AI Humans bring face-to-face connection to every conversation.", items: [
-    "Trained on millions of conversations to deliver smooth, humanlike dialogue.",
-    "Understands actions, emotions, and screenshares to respond with context.",
-    "Displays expressive reactions and movement that build trust and engagement.",
+  { label: "SPEAKS LIKE YOU", title: "(in every dialect)", desc: "Agents reply in the register the buyer opened with — Egyptian, Gulf, Levantine, Maghrebi, or English.", items: [
+    "Dialect is detected on the first message and locked for the whole conversation.",
+    "Sellers train the agent on their own phrasing, emoji, and shorthand via the silent trainer.",
+    "Formality is treated as distance: casual buyers get casual replies.",
   ]},
-  { label: "PERCEPTIVE", title: "(and aware)", desc: "AI Humans are modeled after us: they see, sense, and understand to build trust through real conversation.", items: [
-    "Deciphers nonverbal cues like body language and micro-expressions. Uses context to adapt responses and create meaningful, two-way interactions.",
-    "Every input adds context, ensuring the AI Human sees the full picture: screenshare, voice, and surroundings.",
-    "Monitors key events and behaviors to trigger function calls while continuously sensing subtle background shifts with real-time data.",
+  { label: "NEVER GUESSES", title: "(grounded or silent)", desc: "Every price, size, and availability claim is checked against live inventory before a word is written.", items: [
+    "Retrieval runs before generation: the product record constrains the reply.",
+    "Out-of-catalog questions get honest answers and the closest real match — never an invented price.",
+    "Stock re-syncs continuously, so a 2 a.m. reply reflects the 1:58 a.m. sale.",
   ]},
-  { label: "THINKING", title: "(with agency)", desc: "AI Humans are fully formed, with the cognitive skills needed for efficient, effective conversations.", items: [
-    "Industry-leading RAG grounds responses in your data. 15x faster than other solutions.",
-    "Remembers past interactions to personalize responses and pickup conversations where they left off. Free to toggle on or off to fit any interaction.",
-    "Uses customizable frameworks and logic branching to naturally structure conversations and keep moving toward your goals.",
+  { label: "CLOSES THE LOOP", title: "(to the order)", desc: "Agents are optimized for the conversation's business outcome, not for ending the thread.", items: [
+    "Order confirmations are written and confirmed before capture — item, total, address, payment method.",
+    "Out-of-stock replies offer the wait, the alternative, or the variation instead of a dead end.",
+    "Emotional moments and edge cases route to a human, by design.",
   ]},
 ];
 
 const papers = [
-  { label: "TURN-TAKING", title: "Raven-1: Bringing Emotional Intelligence to Artificial Intelligence", desc: "Introducing Raven-1. A multimodal perception system that captures not just what users say, but how they say it, how they look when they say it, and what that combination actually means. It interprets tone, expression, hesitation, and context in real time, enabling AI that can truly understand intent rather than simply respond to words." },
-  { label: "CONVERSATIONAL FLOW", title: "Sparrow-1: Human-Level Conversational Timing in Real-Time Voice", desc: "Sparrow-1 is a specialized, multilingual audio model for real-time conversational flow and floor transfer. It predicts when a system should listen, wait, or speak, enabling response timing that mirrors human conversation rather than simply responding as fast as possible." },
-  { label: "INTERFACE", title: "The Knowledge Navigator, Reimagined", desc: "Forty years ago, Apple imagined the Knowledge Navigator. Meet Dom, our real-life take on it, and the conversational commerce interface from Zemest that powers him." },
-  { label: "FACE-TO-FACE", title: "Modern AI faces can hold live conversations and read your expressions", desc: "Explore the rendering, turn-taking, and perception models that make it possible." },
-  { label: "COMPARISON", title: "Face-to-face conversational AI vs. chatbot", desc: "Understanding the full spectrum. The face-to-face conversational AI vs. chatbot comparison comes down to capability tiers. A guide to types, examples, and when to move from text to video." },
+  { label: "DIALECT", title: "Rabbit v1: Learning to Sell in Six Arabic Dialects", desc: "How we trained an Arabic model that replies in Egyptian, Gulf, Levantine, and Maghrebi — and why the gap between MSA and how people text decides whether buyers trust a store." },
+  { label: "LATENCY", title: "Detecting Dialect in Under 50 Milliseconds", desc: "The register of the first message decides the register of every reply after it. Inside the single-purpose classifier that makes that call before the buyer's cursor blinks — and the evaluation harness that keeps it honest." },
+  { label: "VOICE", title: "Voice Notes Are Half Your Inbox", desc: "Egyptian buyers send audio the way other markets send text. Rebuilding transcription around real commerce speech: code-switching, street noise, and the four-second note that just says 'same as before'." },
+  { label: "GROUNDING", title: "Grounded by Design: Every Reply Checks Your Stock First", desc: "The most expensive sentence an AI can write is a confident price. Our order of operations puts the live inventory record before the model, and treats hallucination as a solvable architecture problem." },
+  { label: "EVALUATION", title: "Bots Answer. Agents Sell.", desc: "The chatbot era optimized for deflection; commerce agents optimize for the opposite. The metrics, training signals, and design decisions that come from measuring whether a conversation reaches an order." },
 ];
 
 export default function ResearchPage() {
@@ -48,7 +48,7 @@ export default function ResearchPage() {
         <PageHero
           eyebrow="RESEARCH"
           title={<>A new kind of <span className="serif-italic">research lab</span></>}
-          description="We study how intelligence perceives context, emotion, and tone to create AI that understands and acts as humans do."
+          description="We study how conversations become sales — dialect, tone, timing, and truthfulness — and turn what we learn into agents that sell like the best sellers do."
           ctas={[{ label: "Start a demo conversation", href: "/get-started", variant: "primary" }]}
         />
 
@@ -56,10 +56,14 @@ export default function ResearchPage() {
         <PageSection bg="grain">
           <div className="text-center max-w-3xl mx-auto">
             <h2 className="font-[var(--font-serif-display)] text-4xl sm:text-5xl font-normal tracking-tight text-[var(--tavus-terminal-black)]">
-              Bridging the human-machine <span className="serif-italic">divide</span>
+              Bridging the buyer-seller <span className="serif-italic">gap</span>
             </h2>
             <p className="mt-6 text-base sm:text-lg text-[var(--tavus-hardware-gray-8)] leading-relaxed">
-              Human conversation is a rhythm — every glance, pause, and tone changes the meaning. At Zemest, we study that rhythm, designing AI that understands emotion, intent, and timing as one signal. We&apos;re building systems that don&apos;t just respond, they move with you.
+              A store's chat has a rhythm: the buyer's dialect, the shorthand, the hour when
+              questions arrive. At Zemest, we study that rhythm — what makes a buyer stay,
+              what makes them go quiet, what closes the sale — and build agents that move
+              with it. We&apos;re not chasing conversation for its own sake; we&apos;re chasing the
+              moment a question becomes an order.
             </p>
           </div>
         </PageSection>
@@ -73,10 +77,10 @@ export default function ResearchPage() {
               <span className="w-2 h-2 bg-[var(--tavus-terminal-black)]" />
             </div>
             <h2 className="font-[var(--font-serif-display)] text-4xl sm:text-5xl font-normal tracking-tight text-[var(--tavus-terminal-black)]">
-              We&apos;re building AI that feels <span className="serif-italic">human</span>
+              What we&apos;re <span className="serif-italic">working on</span>
             </h2>
             <p className="mt-4 text-base text-[var(--tavus-hardware-gray-8)] max-w-2xl mx-auto leading-relaxed">
-              Machines that see, listen, and respond naturally.
+              Six disciplines, one goal: agents that answer like your best day, every day.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -95,7 +99,7 @@ export default function ResearchPage() {
               <span className="w-2 h-2 bg-[var(--tavus-terminal-black)]" />
             </div>
             <h2 className="font-[var(--font-serif-display)] text-4xl sm:text-5xl font-normal tracking-tight text-[var(--tavus-terminal-black)]">
-              Our research manifests as the traits that make AI feel <span className="serif-italic">human</span>
+              Our research shows up as the traits that make agents <span className="serif-italic">sell</span>
             </h2>
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -128,7 +132,7 @@ export default function ResearchPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {papers.map((p) => (
-              <RetroCard key={p.title} label={p.label} title={p.title} description={p.desc} cta={{ label: "Read paper", href: "#" }} />
+              <RetroCard key={p.title} label={p.label} title={p.title} description={p.desc} cta={{ label: "Read the post", href: "/blog" }} />
             ))}
           </div>
         </PageSection>
@@ -142,10 +146,16 @@ export default function ResearchPage() {
               <span className="w-2 h-2 bg-[var(--tavus-terminal-black)]" />
             </div>
             <h2 className="font-[var(--font-serif-display)] text-4xl sm:text-5xl font-normal tracking-tight text-[var(--tavus-terminal-black)]">
-              Ethical and aligned <span className="serif-italic">by design</span>
+              Honest by <span className="serif-italic">design</span>
             </h2>
             <p className="mt-6 text-base sm:text-lg text-[var(--tavus-hardware-gray-8)] leading-relaxed">
-              We believe technology earns trust through honesty, not opacity. Zemest is built on informed consent, transparent systems, and full disclosure — no fine print, no hidden levers. Every model, dataset, and likeness we use exists with permission and purpose. You deserve to know how the magic works, and we&apos;re here to show you.
+              An agent that sells for you is an agent that speaks to your customers under
+              your name — and we believe that comes with obligations. Our agents never claim
+              to be human when asked, never invent facts to keep a conversation alive, and
+              hand the emotional moments — complaints, refunds, anger — to a person. Customer
+              conversations belong to the store that earned them, and every model we train
+              runs on data with permission and purpose. The magic shouldn&apos;t be hidden; it
+              should just work, honestly.
             </p>
             <a
               href="/blog"

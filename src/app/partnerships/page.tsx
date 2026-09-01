@@ -10,15 +10,15 @@ const programs = [
     icon: Plug,
     label: "TECHNOLOGY PARTNERS",
     title: "Integrate Zemest into your product",
-    desc: "Embed PALs natively in your platform — CRM, support tool, learning platform, or vertical SaaS. Co-sell with our go-to-market team and earn revenue share.",
+    desc: "Embed Zemest agents natively in your platform — CRM, support tool, storefront, or vertical SaaS. Co-sell with our go-to-market team and earn revenue share.",
     cta: "Become a partner",
     href: "/book-demo",
   },
   {
     icon: Handshake,
     label: "AGENCY PARTNERS",
-    title: "Build PALs for your clients",
-    desc: "Agencies and consultancies — get certified to design and deploy PALs for your clients. Access to partner-only pricing, training, and lead sharing.",
+    title: "Build agents for your clients",
+    desc: "Agencies and consultancies — get certified to design and deploy Zemest agents for your clients. Access to partner-only pricing, training, and lead sharing.",
     cta: "Join the agency program",
     href: "/book-demo",
   },
@@ -26,7 +26,7 @@ const programs = [
     icon: Rocket,
     label: "STARTUP PROGRAM",
     title: "Build on Zemest, free for 12 months",
-    desc: "Early-stage startups get $50k in API credits, dedicated support, and co-marketing opportunities. If you're building with PALs, we want to help.",
+    desc: "Early-stage startups get $50k in credits, dedicated support, and co-marketing opportunities. If you're building on Zemest, we want to help.",
     cta: "Apply to startup program",
     href: "/book-demo",
   },
@@ -48,7 +48,7 @@ export default function PartnershipsPage() {
         <PageHero
           eyebrow="PARTNERSHIPS"
           title={<>Wanna make a <span className="serif-italic">deal?</span></>}
-          description="Whether you're looking to integrate Zemest into your product, build PALs for your clients, or explore a strategic partnership — we'd love to talk. Connect with us and let's figure out what we can build together."
+          description="Whether you're looking to integrate Zemest into your product, build agents for your clients, or explore a strategic partnership — we'd love to talk. Connect with us and let's figure out what we can build together."
           ctas={[
             { label: "Connect with us", href: "/book-demo", variant: "primary" },
             { label: "Explore partnerships", href: "#programs", variant: "secondary" },

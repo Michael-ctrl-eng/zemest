@@ -1482,3 +1482,24 @@ Stage Summary:
 - G3 finding: 38 known CVEs in requirements (python-jose 3.3.0 → upgrade to 3.4.0 urgent)
 - G2 finding: WAL holds ~1/3 of recent data — naive cp backups would be corrupt; VACUUM INTO script now live
 - Top research verdicts: Huey over ARQ (SQLite-native); Paymob hand-rolled with official MIT skill spec; GoatCounter for analytics; Caddy+systemd+single-worker uvicorn for prod; G3 CI pipeline ready to drop in
+
+---
+Task ID: 22
+Agent: main-orchestrator
+Task: Exceptional English copy polish across the platform (continuation of Task 21's user request); fill all placeholder pages; rewrite off-brand template leftovers
+
+Work Log:
+- Read worklog + git state: Task 21 fully pushed (origin/main == 30ab357); G1-G5 research complete; identified the remaining unfinished item = the deep copy polish
+- Audited every marketing route + site component: found 11 unfilled template pages (support, trust, status, brand-kit, press-kit, acceptable-use, dpa, 4 solutions sub-pages — all showing literal "TITLE/EYEBROW/DESCRIPTION/coming soon"), leftover template defects (pricing "Rabbit OR Rat"/"Rabbit + Rat", book-demo "TAVUS · BOOK A DEMO" window title, PALs terminology in book-demo/enterprise/partnerships), and 18 Tavus video-avatar blog posts + Tavus research page + SF-HQ careers content
+- Fixed defects: Rat→Rooster (pricing comparison table), TAVUS→ZEMEST, PALs→agents everywhere user-facing (incl. dead solutions.tsx for hygiene), setup claim 10min→5min (aligns with landing CTA), book-demo form placeholders Charlie/Zemest→Youssef/Hassan, logos.tsx subtitle rewritten, landing use-cases carousel dead "#" links → wired to /solutions/* pages
+- NEW src/lib/blog-posts.ts: 18 on-brand posts (dialect modeling, grounding, voice notes, WhatsApp playbook, Egypt payments COD/Vodafone Cash/InstaPay, reply-time economics, style trainer, DM etiquette, image understanding, dialect detection, out-of-stock art, order capture, multi-shop inventory) with full article bodies; blog index now consumes it; NEW blog/[slug] route (generateStaticParams + generateMetadata + article layout) — blog cards no longer 404
+- Research page rewritten: 6 commerce-research areas (dialect/voice/image/grounding/style/evaluation), 3 agent traits, 5 papers mirroring the blog, ethics section reframed to agent honesty
+- Careers rewritten: HQ Cairo, 9 product-relevant roles (FastAPI, Next.js, data-eng inventory sync, Arabic dialects research, voice ML, MENA GTM), "The Best Sale Happens at 2 a.m." section
+- Enterprise use-cases rewritten to commerce (WhatsApp selling, DM closers, comment moderators, stock-aware replies, portfolio consoles); partnerships/enterprise PALs → agents
+- Wrote real copy for all 11 placeholder pages using existing design components only (PageHero/PageSection/RetroCard — zero design changes): solutions/whatsapp·messenger·instagram·inventory (each with how-it-works, what-it-handles, sample exchange in Arabic where fitting, stats, CTA), support center, trust center, status page (component grid + 3-incident honest history), brand kit (wordmark/palette/type/voice), press kit (facts + short/long boilerplate + usage notes), acceptable-use, DPA summary
+- Verified: tsc on src/ → 0 errors; all 24 routes return 200 on live :3000; rendered HTML spot-checked (Rooster, ZEMEST window, agents copy, new blog titles, wired carousel links); zero user-facing PAL/Rat/TAVUS/placeholder strings remain
+
+Stage Summary:
+- English copy now consistent: one terminology (agent), one product story (commerce moderation for Egyptian stores), zero template leftovers, zero dead marketing links, zero placeholder pages
+- 16 files edited + 3 new files (lib/blog-posts.ts, blog/[slug]/page.tsx) — text and content only, zero design/class changes beyond reused components
+- Push pending: PAT not persisted in sandbox (used inline last session, correctly not stored) — commit ready, needs user to supply PAT for the final push

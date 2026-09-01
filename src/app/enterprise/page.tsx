@@ -21,8 +21,8 @@ export default function EnterprisePage() {
       <main>
         <PageHero
           eyebrow="ENTERPRISE"
-          title={<>Customized PALs, <span className="serif-italic">fully managed</span></>}
-          description="Solutions are bespoke, fully managed PAL deployments. Our team designs, builds, and tunes a PAL around your exact workflow, then runs it in production at the scale and reliability your business requires."
+          title={<>Customized agents, <span className="serif-italic">fully managed</span></>}
+          description="Every solution is a bespoke, fully managed agent deployment. Our team designs, builds, and tunes an agent around your exact workflow, then runs it in production at the scale and reliability your business requires."
           ctas={[
             { label: "Book a demo", href: "/book-demo", variant: "primary" },
             { label: "Talk to sales", href: "/partnerships", variant: "secondary" },
@@ -50,8 +50,8 @@ export default function EnterprisePage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {[
-              { n: "01", title: "Discovery & design", desc: "We sit down with your team, map your workflow, and design the PAL around the moments that matter most." },
-              { n: "02", title: "Build & integrate", desc: "Our solutions engineers build the PAL, integrate it into your stack, and tune it on real conversations." },
+              { n: "01", title: "Discovery & design", desc: "We sit down with your team, map your workflow, and design the agent around the moments that matter most." },
+              { n: "02", title: "Build & integrate", desc: "Our solutions engineers build the agent, integrate it into your stack, and tune it on real conversations." },
               { n: "03", title: "Deploy & manage", desc: "We run it in production — monitoring, tuning, scaling — so your team can stay focused on the business." },
             ].map((s) => (
               <div key={s.n} className="bg-[var(--tavus-plastic-1)] border-[3px] border-[var(--tavus-terminal-black)] shadow-[6px_6px_0_0_var(--tavus-terminal-black)] p-6">
@@ -72,12 +72,12 @@ export default function EnterprisePage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[
-              { label: "SALES", title: "GTM agents", desc: "Inbound demos, outbound follow-ups, and QBR coaching." },
-              { label: "HEALTHCARE", title: "Patient intake", desc: "Pre-visit intake, triage, and post-discharge check-ins." },
-              { label: "INTERVIEWS", title: "Screening agents", desc: "Fair, structured, face-to-face screening at scale." },
-              { label: "L&D", title: "Onboarding guides", desc: "Adaptive mentors that answer questions from day one." },
-              { label: "SUPPORT", title: "Resolution agents", desc: "Tier-1 triage with screen-share and visual context." },
-              { label: "CUSTOM", title: "Bespoke PALs", desc: "Bring us any workflow — we'll design a PAL for it." },
+              { label: "WHATSAPP", title: "Selling agents", desc: "Answer product questions, quote prices, and close — in the customer's own dialect." },
+              { label: "INSTAGRAM", title: "DM closers", desc: "Story replies, product inquiries, and order booking on autopilot." },
+              { label: "MESSENGER", title: "Comment moderators", desc: "Every public comment answered in seconds — day, night, and holidays." },
+              { label: "INVENTORY", title: "Stock-aware replies", desc: "Live inventory checks before every quote, so you never oversell." },
+              { label: "MULTI-BRAND", title: "Portfolio consoles", desc: "One dashboard for every storefront, market, and language you sell in." },
+              { label: "CUSTOM", title: "Bespoke agents", desc: "Bring us any workflow — we'll design an agent for it." },
             ].map((u) => (
               <RetroCard key={u.label} label={u.label} title={u.title} description={u.desc} cta={{ label: "Learn more", href: "/solutions" }} />
             ))}

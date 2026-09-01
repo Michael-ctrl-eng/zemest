@@ -15,8 +15,8 @@ export default function BookDemoPage() {
       <main>
         <PageHero
           eyebrow="BOOK A DEMO"
-          title={<>See PALs in <span className="serif-italic">action</span></>}
-          description="Get a 30-minute live demo with our solutions team. We'll show you PALs solving your exact workflow, answer your questions, and design a deployment that fits your business."
+          title={<>See agents in <span className="serif-italic">action</span></>}
+          description="Get a 30-minute live demo with our solutions team. We'll show you an agent solving your exact workflow, answer your questions, and design a rollout that fits your business."
         />
 
         <PageSection bg="grain">
@@ -28,7 +28,7 @@ export default function BookDemoPage() {
               </h3>
               <ul className="space-y-3">
                 {[
-                  "30-minute live PAL conversation tailored to your workflow",
+                  "30-minute live agent conversation tailored to your workflow",
                   "Architecture deep-dive with a solutions engineer",
                   "Custom pricing & deployment plan",
                   "Risk-free — no commitment, no pressure",
@@ -54,7 +54,7 @@ export default function BookDemoPage() {
             <div className="bg-white border-[3px] border-[var(--tavus-terminal-black)] shadow-[6px_6px_0_0_var(--tavus-terminal-black)] overflow-hidden">
               <div className="win-title-bar">
                 <span className="w-2.5 h-2.5 bg-[var(--tavus-bubbletech-4)] border border-[var(--tavus-terminal-black)]" />
-                <span>TAVUS · BOOK A DEMO</span>
+                <span>ZEMEST · BOOK A DEMO</span>
                 <span className="ml-auto flex gap-1">
                   <span className="w-2.5 h-2.5 border border-[var(--tavus-terminal-black)]" />
                   <span className="w-2.5 h-2.5 border border-[var(--tavus-terminal-black)]" />
@@ -82,8 +82,8 @@ export default function BookDemoPage() {
                   }}
                 >
                   <div className="grid grid-cols-2 gap-3">
-                    <FormField label="FIRST NAME" name="first" placeholder="Charlie" />
-                    <FormField label="LAST NAME" name="last" placeholder="Zemest" />
+                    <FormField label="FIRST NAME" name="first" placeholder="Youssef" />
+                    <FormField label="LAST NAME" name="last" placeholder="Hassan" />
                   </div>
                   <FormField label="WORK EMAIL" name="email" type="email" placeholder="you@company.com" />
                   <FormField label="COMPANY" name="company" placeholder="Acme Inc." />

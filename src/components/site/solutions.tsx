@@ -19,7 +19,7 @@ const solutions = [
     label: "Sales Agents",
     headline: "Convert more by talking face-to-face",
     desc:
-      "PALs handle inbound demos and outbound follow-ups in real-time. They reference each prospect's company, role, and pain point — and book meetings before the conversation ends.",
+      "Agents handle inbound demos and outbound follow-ups in real-time. They reference each prospect's company, role, and pain point — and book meetings before the conversation ends.",
     stats: [
       { v: "3.2×", k: "reply rate" },
       { v: "47%", k: "meeting lift" },
@@ -39,7 +39,7 @@ const solutions = [
     label: "Healthcare Agents",
     headline: "Deliver better patient care",
     desc:
-      "PALs take intake at the patient's own pace, in their language, and hand the clinician a clear picture before anyone walks into the room. Compliance, privacy, and empathy built in.",
+      "Agents take intake at the patient's own pace, in their language, and hand the clinician a clear picture before anyone walks into the room. Compliance, privacy, and empathy built in.",
     stats: [
       { v: "+24pt", k: "patient CSAT" },
       { v: "-38%", k: "intake time" },
@@ -59,7 +59,7 @@ const solutions = [
     label: "Interview Agents",
     headline: "Screen candidates at scale, fairly",
     desc:
-      "Every candidate gets the same structured, face-to-face interview. PALs score consistently, eliminate scheduling friction, and free your team to focus on finalists.",
+      "Every candidate gets the same structured interview. Agents score consistently, eliminate scheduling friction, and free your team to focus on finalists.",
     stats: [
       { v: "10×", k: "throughput" },
       { v: "+18pt", k: "diversity" },
@@ -79,7 +79,7 @@ const solutions = [
     label: "L&D Agents",
     headline: "Onboarding that adapts to every learner",
     desc:
-      "Replace static LMS videos with interactive PAL instructors. Learners ask questions aloud, the PAL answers in real-time using approved knowledge bases — every cohort gets a personal mentor.",
+      "Replace static LMS videos with interactive agent instructors. Learners ask questions aloud, the agent answers in real-time using approved knowledge bases — every cohort gets a personal mentor.",
     stats: [
       { v: "+38%", k: "completion" },
       { v: "-54%", k: "time-to-competency" },
@@ -97,9 +97,9 @@ const solutions = [
     id: "custom",
     icon: Boxes,
     label: "Custom Agents",
-    headline: "Bespoke PALs built around your workflow",
+    headline: "Bespoke agents built around your workflow",
     desc:
-      "Bring us any use case — from internal IT helpdesk to field-service diagnostics. We design, build, and tune a PAL around your exact workflow, then run it in production at the scale your business requires.",
+      "Bring us any use case — from internal IT helpdesk to field-service diagnostics. We design, build, and tune an agent around your exact workflow, then run it in production at the scale your business requires.",
     stats: [
       { v: "1:1", k: "tailored" },
       { v: "SLA", k: "guaranteed" },
@@ -110,7 +110,7 @@ const solutions = [
     scenario: {
       tag: "Custom · Your workflow",
       to: "any use case",
-      line: "Tell us the moment that matters most — we'll craft a PAL that fits it, end to end.",
+      line: "Tell us the moment that matters most — we'll craft an agent that fits it, end to end.",
     },
   },
 ];
@@ -133,7 +133,7 @@ export function Solutions() {
             <span className="text-gradient">for infinite scale</span>
           </h2>
           <p className="mt-6 text-base sm:text-lg text-muted-foreground leading-relaxed">
-            A PAL can be whatever the moment calls for: a teammate, an onboarding
+            An agent can be whatever the moment calls for: a teammate, an onboarding
             guide, a customer expert, or a trusted companion. Here are a few
             ways organizations are putting them to work.
           </p>

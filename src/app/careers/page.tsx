@@ -24,14 +24,15 @@ const perks = [
 ];
 
 const roles = [
-  { team: "ENGINEERING", title: "Senior Research Engineer — Perception", location: "San Francisco · Remote", type: "Full-time" },
-  { team: "ENGINEERING", title: "Staff Frontend Engineer", location: "Remote · US/EU", type: "Full-time" },
-  { team: "ENGINEERING", title: "Distributed Systems Engineer", location: "San Francisco", type: "Full-time" },
-  { team: "RESEARCH", title: "Research Scientist — Conversational AI", location: "San Francisco · Remote", type: "Full-time" },
-  { team: "DESIGN", title: "Senior Product Designer", location: "San Francisco · Remote", type: "Full-time" },
-  { team: "GO-TO-MARKET", title: "Enterprise Account Executive", location: "New York · Remote", type: "Full-time" },
-  { team: "GO-TO-MARKET", title: "Solutions Engineer", location: "San Francisco", type: "Full-time" },
-  { team: "PEOPLE", title: "Technical Recruiter", location: "Remote · US", type: "Full-time" },
+  { team: "ENGINEERING", title: "Senior Backend Engineer — FastAPI", location: "Cairo · Hybrid", type: "Full-time" },
+  { team: "ENGINEERING", title: "Senior Frontend Engineer — Next.js", location: "Remote · EG/EU", type: "Full-time" },
+  { team: "ENGINEERING", title: "Data Engineer — Inventory Sync", location: "Cairo", type: "Full-time" },
+  { team: "RESEARCH", title: "Research Scientist — Arabic Dialects", location: "Cairo · Remote", type: "Full-time" },
+  { team: "RESEARCH", title: "ML Engineer — Voice Transcription", location: "Remote · MENA", type: "Full-time" },
+  { team: "DESIGN", title: "Senior Product Designer", location: "Cairo · Remote", type: "Full-time" },
+  { team: "GO-TO-MARKET", title: "Account Executive — MENA", location: "Cairo", type: "Full-time" },
+  { team: "GO-TO-MARKET", title: "Solutions Engineer", location: "Cairo · Remote", type: "Full-time" },
+  { team: "PEOPLE", title: "Technical Recruiter", location: "Remote · EG", type: "Full-time" },
 ];
 
 export default function CareersPage() {
@@ -42,7 +43,7 @@ export default function CareersPage() {
         <PageHero
           eyebrow="CAREERS"
           title={<>Work at <span className="serif-italic">Zemest</span></>}
-          description="Join the team decoding conversation. Zemest is an AI research lab reimagining the human and machine interface. We're building the foundations of conversational commerce — AI that sees, hears, and responds with emotion, so talking to a computer feels as natural as talking to a friend."
+          description="Join the team building the agents that sell for Egyptian stores. We're writing the playbook for Arabic conversational commerce — agents that speak every dialect, never guess a price, and close while their owners sleep."
           ctas={[{ label: "Explore open roles", href: "#roles", variant: "primary" }]}
         />
 
@@ -52,25 +53,25 @@ export default function CareersPage() {
             <div>
               <div className="inline-flex items-center gap-2 mb-4">
                 <span className="w-2 h-2 bg-[var(--tavus-terminal-black)]" />
-                <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-[var(--tavus-hardware-gray-8)]">THE NEXT INTELLIGENCE</span>
+                <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-[var(--tavus-hardware-gray-8)]">THE BEST SALE HAPPENS AT 2 A.M.</span>
               </div>
               <h2 className="font-[var(--font-serif-display)] text-4xl sm:text-5xl font-normal tracking-tight text-[var(--tavus-terminal-black)] leading-[1.05]">
-                The Next Intelligence is <span className="serif-italic">Emotional</span>
+                The Best Sale Happens at <span className="serif-italic">2 a.m.</span>
               </h2>
               <p className="mt-6 text-base sm:text-lg text-[var(--tavus-hardware-gray-8)] leading-relaxed">
-                We're a small team by design. Everyone here meaningfully shapes outcomes. We move fast, work hard, and care about craft. Our HQ is in San Francisco, with team members across the globe.
+                We're a small team by design. Everyone here meaningfully shapes outcomes. We move fast, work hard, and care about craft. Our HQ is in Cairo, with team members across the region and beyond — building for the merchants everyone else overlooks.
               </p>
               <p className="mt-4 text-base sm:text-lg text-[var(--tavus-hardware-gray-8)] leading-relaxed">
-                If you care about the future of intelligence and how it feels, you'll fit right in.
+                If you care about the moment a question becomes an order — and the millions that happen while sellers sleep — you'll fit right in.
               </p>
             </div>
             <div className="bg-white border-[3px] border-[var(--tavus-terminal-black)] shadow-[8px_8px_0_0_var(--tavus-terminal-black)] p-8">
-              <div className="text-[11px] font-bold tracking-[0.15em] uppercase text-[var(--tavus-bubbletech-4)]">YOU'VE NEVER TALKED TO AI LIKE THIS BEFORE</div>
+              <div className="text-[11px] font-bold tracking-[0.15em] uppercase text-[var(--tavus-bubbletech-4)]">EVERY MESSAGE DESERVES AN ANSWER</div>
               <p className="mt-4 font-[var(--font-serif-display)] text-2xl font-normal text-[var(--tavus-terminal-black)] leading-snug">
-                Bring human connection to every AI interaction.
+                Build the agent your favorite store deserves.
               </p>
               <p className="mt-4 text-sm text-[var(--tavus-hardware-gray-8)] leading-relaxed">
-                We're researchers, engineers, and artists building AI that listens, learns, and connects like people do. Come decode the conversation with us.
+                We're researchers, engineers, and sellers building agents that answer in seconds, in every dialect, without ever guessing a price. Come write the playbook with us.
               </p>
             </div>
           </div>

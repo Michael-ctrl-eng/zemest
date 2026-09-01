@@ -299,7 +299,7 @@ export default function PricingPage() {
                 <tbody>
                   {[
                     ["Channels", "1", "3", "Unlimited"],
-                    ["AI models", "Rabbit OR Rat", "Rabbit + Rat", "Both + custom training"],
+                    ["AI models", "Rabbit OR Rooster", "Rabbit + Rooster", "Both + custom training"],
                     ["Conversations / month", "100", "5,000", "Unlimited"],
                     ["Inventory Connect shops", "1", "3", "Unlimited"],
                     ["Dialect engine (26 dialects)", true, true, true],
@@ -423,7 +423,7 @@ export default function PricingPage() {
               Your agent could be selling <span className="serif-italic">tonight</span>
             </h2>
             <p className="mt-4 mx-auto max-w-lg text-sm text-[var(--tavus-terminal-black)]/80 leading-relaxed">
-              Set up takes under 10 minutes. Connect a channel, import your products, and watch
+              Setup takes under 5 minutes. Connect a channel, import your products, and watch
               the first order roll in while you sleep.
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-4">

@@ -13,6 +13,7 @@ const cases = [
     desc: "The agent reads images, listens to voice messages, and responds in the dialect your customers actually use — no script, no awkward bot vibes.",
     image: "/zemest-card-messenger.avif",
     stat: { v: "+38%", k: "CSAT" },
+    href: "/solutions/messenger",
   },
   {
     tag: "WHATSAPP MODERATION",
@@ -21,6 +22,7 @@ const cases = [
     desc: "The agent answers product questions, checks inventory live, and replies in your exact tone — voice notes included.",
     image: "/zemest-card-whatsapp.avif",
     stat: { v: "3.2×", k: "reply rate" },
+    href: "/solutions/whatsapp",
   },
   {
     tag: "INSTAGRAM DM MODERATION",
@@ -29,6 +31,7 @@ const cases = [
     desc: "From story replies to product inquiries, the agent handles every DM, knows what's in stock, quotes prices, and books the order — in Arabic or English.",
     image: "/zemest-card-instagram.avif",
     stat: { v: "+47%", k: "DM→sale lift" },
+    href: "/solutions/instagram",
   },
 ];
 
@@ -118,7 +121,7 @@ export function UseCases() {
                     {c.desc}
                   </p>
                   <a
-                    href="#"
+                    href={c.href}
                     className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-bold tracking-wider uppercase text-[var(--tavus-terminal-black)] hover:underline"
                   >
                     See it in action

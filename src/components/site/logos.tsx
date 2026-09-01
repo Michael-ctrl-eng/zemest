@@ -40,7 +40,7 @@ export function Logos() {
           </div>
         </div>
         <p className="text-center text-[10px] tracking-[0.08em] uppercase text-white/35 mt-4">
-          Every agent knows every tool and price — straight from your brand&apos;s page.
+          Every agent knows your products, prices, and live stock — straight from your page.
         </p>
       </div>
     </section>
