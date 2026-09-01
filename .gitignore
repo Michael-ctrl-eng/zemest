@@ -97,3 +97,8 @@ upload/*
 dev.log
 *.log
 *.pid
+
+# Huey queue SQLite + WAL sidecars
+*.db-shm
+*.db-wal
+huey_queue.db*

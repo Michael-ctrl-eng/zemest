@@ -358,6 +358,61 @@ export const conversationsApi = {
     api.get<Conversation>(`/tenants/${tenantId}/conversations/${conversationId}`),
 };
 
+// ---------- Style learning (brand voice profile) ----------
+
+/**
+ * Learned communication-style profile for a tenant.
+ * Core fields come from the style learner; the silent trainer enriches the
+ * dict with extra keys (buyer_persona, exemplars, silent_training, …), so the
+ * known fields below are all optional and the object stays open-ended.
+ */
+export interface StyleProfile {
+  tone?: string | null;
+  formality_level?: number | null;
+  greeting_patterns?: string[];
+  signoff_patterns?: string[];
+  emoji_frequency?: string | null;
+  emoji_inventory?: string[];
+  avg_response_length?: string | null;
+  avg_length_chars?: number | null;
+  language_mix?: Record<string, number> | null;
+  vocabulary?: string[];
+  sample_replies?: string[];
+  message_count_analyzed?: number | null;
+  total_messages_available?: number | null;
+  built_at?: string | null;
+  /** Silent-trainer enrichment */
+  silent_training?: {
+    stage?: string;
+    maturity?: number;
+    version?: string;
+    last_epoch_at?: string | null;
+    [key: string]: unknown;
+  } | null;
+  buyer_persona?: {
+    dialects?: Record<string, number> | null;
+    franco_ratio?: number | null;
+    top_openers?: string[];
+    [key: string]: unknown;
+  } | null;
+  exemplars?: { customer?: string | null; reply?: string | null }[];
+  [key: string]: unknown;
+}
+
+export interface StyleProfileResponse {
+  status: string; // "built" | "not_built"
+  built_at?: string | null;
+  message?: string | null;
+  profile?: StyleProfile | null;
+}
+
+export const styleApi = {
+  get: (tenantId: string) => api.get<StyleProfileResponse>(`/tenants/${tenantId}/style-profile`),
+  /** Rebuild the profile from the merchant messages already in the DB. */
+  rebuild: (tenantId: string) =>
+    api.post<{ status: string; profile: StyleProfile }>(`/tenants/${tenantId}/rebuild-style`),
+};
+
 export const crawlApi = {
   jobs: (tenantId: string) => api.get<CrawlJob[]>(`/tenants/${tenantId}/crawl/jobs`),
   start: (tenantId: string, url: string, depth = 1) =>

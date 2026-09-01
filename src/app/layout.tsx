@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Inter, Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
@@ -75,6 +76,16 @@ export default function RootLayout({
         {children}
         <Toaster />
         <ToastContainer />
+        {/* Cookieless analytics (GoatCounter, G5 pick) — inert unless
+            NEXT_PUBLIC_GOATCOUNTER_CODE is set at build time. ~4.5KB,
+            no cookies, no PII. */}
+        {process.env.NEXT_PUBLIC_GOATCOUNTER_CODE ? (
+          <Script
+            data-goatcounter={`https://${process.env.NEXT_PUBLIC_GOATCOUNTER_CODE}.goatcounter.com/count`}
+            src="https://gc.zgo.at/count.js"
+            strategy="afterInteractive"
+          />
+        ) : null}
       </body>
     </html>
   );

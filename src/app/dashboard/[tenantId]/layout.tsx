@@ -21,6 +21,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { MobileSidebar } from "@/components/site/mobile-sidebar";
+import { DashboardQueryProvider } from "@/components/dashboard-query-provider";
 
 const sidebarItems = [
   { label: "Overview", href: "", icon: LayoutDashboard },
@@ -117,8 +118,11 @@ export default function TenantLayout({
           </div>
         </aside>
 
-        {/* Main content */}
-        <main className="relative flex-1 min-w-0 px-5 py-7 sm:px-8 sm:py-9">{children}</main>
+        {/* Main content — wrapped in the TanStack Query provider so every
+            tenant page can use the shared data hooks */}
+        <main className="relative flex-1 min-w-0 px-5 py-7 sm:px-8 sm:py-9">
+          <DashboardQueryProvider>{children}</DashboardQueryProvider>
+        </main>
       </div>
 
       {/* Mobile sidebar drawer */}

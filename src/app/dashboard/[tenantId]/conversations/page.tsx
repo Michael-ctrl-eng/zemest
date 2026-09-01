@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, use } from "react";
+import { useState, useCallback, use } from "react";
 import { Search, X, Send, User, MessagesSquare, AlertTriangle, RefreshCw, Loader2 } from "lucide-react";
-import { conversationsApi, formatDateTime, type Conversation, type ConversationMessage } from "@/lib/zemest-api";
+import { formatDateTime, apiErrorMessage, type Conversation, type ConversationMessage } from "@/lib/zemest-api";
+import { useConversations, useConversation } from "@/hooks/use-dashboard-data";
 import {
   WinCard,
   StatusBadge,
@@ -23,29 +24,30 @@ function lastMessagePreview(c: Conversation): string | null {
 
 export default function ConversationsPage({ params }: { params: Promise<{ tenantId: string }> }) {
   const { tenantId } = use(params);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selected, setSelected] = useState<Conversation | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await conversationsApi.list(tenantId);
-      setConversations(res?.conversations ?? []);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load conversations");
-    } finally {
-      setLoading(false);
-    }
-  }, [tenantId]);
+  // Real data wiring: polled query (10s, paused while the window is hidden);
+  // the refresh button does a manual refetch with its own spinner.
+  const conversationsQuery = useConversations(tenantId);
+  const conversations = conversationsQuery.data?.conversations ?? [];
+  const loading = conversationsQuery.isPending;
+  const error =
+    conversationsQuery.isError && !conversationsQuery.data
+      ? apiErrorMessage(conversationsQuery.error, "Failed to load conversations")
+      : null;
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const [refreshing, setRefreshing] = useState(false);
+  const refetch = conversationsQuery.refetch;
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetch]);
 
   const statuses = Array.from(new Set(conversations.map((c) => c.status)));
 
@@ -69,7 +71,7 @@ export default function ConversationsPage({ params }: { params: Promise<{ tenant
             aria-label="Refresh"
             className="inline-flex items-center justify-center w-11 h-11 border-[3px] border-[var(--tavus-terminal-black)] bg-white shadow-[3px_3px_0_0_var(--tavus-terminal-black)] hover:shadow-[4px_4px_0_0_var(--tavus-terminal-black)] hover:-translate-x-0.5 hover:-translate-y-0.5 active:translate-x-1 active:translate-y-1 active:shadow-[1px_1px_0_0_var(--tavus-terminal-black)] transition-all"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} strokeWidth={2.5} />
+            <RefreshCw className={`w-4 h-4 ${loading || refreshing ? "animate-spin" : ""}`} strokeWidth={2.5} />
           </button>
         }
       />
@@ -194,29 +196,15 @@ function ConversationDetailModal({
   conversation: Conversation;
   onClose: () => void;
 }) {
-  const [messages, setMessages] = useState<ConversationMessage[]>(conversation.messages ?? []);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchThread() {
-      setLoading(true);
-      setError(null);
-      try {
-        const detail = await conversationsApi.get(tenantId, conversation.id);
-        if (!cancelled) setMessages(detail?.messages ?? []);
-      } catch (err: unknown) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load thread");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    fetchThread();
-    return () => {
-      cancelled = true;
-    };
-  }, [tenantId, conversation.id]);
+  // Real data wiring: thread detail comes from the detail endpoint (the list
+  // response has empty messages) and stays live via the shared polling query.
+  const threadQuery = useConversation(tenantId, conversation.id);
+  const messages: ConversationMessage[] = threadQuery.data?.messages ?? conversation.messages ?? [];
+  const loading = threadQuery.isPending;
+  const error =
+    threadQuery.isError && !threadQuery.data
+      ? apiErrorMessage(threadQuery.error, "Failed to load thread")
+      : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[var(--tavus-terminal-black)]/50">

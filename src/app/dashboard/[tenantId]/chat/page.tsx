@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, use } from "react";
 import { Send, Trash2, ToggleLeft, ToggleRight, AlertTriangle, Info, Loader2 } from "lucide-react";
-import { chatApi } from "@/lib/zemest-api";
+import { useConversation, useSendChatMessage, CHAT_POLL_MS } from "@/hooks/use-dashboard-data";
 import {
   WinCard,
   DashHeader,
@@ -22,7 +22,6 @@ export default function ChatPlayground({ params }: { params: Promise<{ tenantId:
   const [input, setInput] = useState("");
   const [customerName, setCustomerName] = useState("Test Customer");
   const [ownerMode, setOwnerMode] = useState(false);
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -30,6 +29,31 @@ export default function ChatPlayground({ params }: { params: Promise<{ tenantId:
   const [sessionTokens, setSessionTokens] = useState(0);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Real data wiring: the playground POSTs through a mutation and the live
+  // conversation thread is polled from the backend (messages land in the DB).
+  const sendMutation = useSendChatMessage(tenantId);
+  const conversationQuery = useConversation(tenantId, conversationId, CHAT_POLL_MS);
+  const sending = sendMutation.isPending;
+
+  // Server transcript is authoritative — once a conversation exists, sync the
+  // local transcript whenever the polled thread gains messages (catches
+  // replies delivered outside this tab). Local optimistic messages are never
+  // dropped: we only replace when the server has at least as many messages.
+  const syncedCountRef = useRef(0);
+  const serverMessages = conversationQuery.data?.messages;
+  useEffect(() => {
+    if (!serverMessages || serverMessages.length === 0) return;
+    if (serverMessages.length > syncedCountRef.current && serverMessages.length >= messages.length) {
+      syncedCountRef.current = serverMessages.length;
+      setMessages(
+        serverMessages.map((m) => ({
+          role: (m.role === "customer" ? "customer" : "ai") as Message["role"],
+          content: m.content,
+        }))
+      );
+    }
+  }, [serverMessages, messages.length]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -41,10 +65,12 @@ export default function ChatPlayground({ params }: { params: Promise<{ tenantId:
     setError(null);
     setMessages((prev) => [...prev, { role: "customer", content: text }]);
     setInput("");
-    setSending(true);
     const t0 = performance.now();
     try {
-      const res = await chatApi.send(tenantId, text, customerName || "Test Customer");
+      const res = await sendMutation.mutateAsync({
+        message: text,
+        customerName: customerName || "Test Customer",
+      });
       setLatencyMs(Math.round(performance.now() - t0));
       setMessages((prev) => [...prev, { role: "ai", content: res.reply }]);
       setConversationId(res.conversation_id ?? null);
@@ -55,8 +81,6 @@ export default function ChatPlayground({ params }: { params: Promise<{ tenantId:
       const detail = err instanceof Error ? err.message : "The agent could not be reached";
       setError(detail);
       setMessages((prev) => [...prev, { role: "ai", content: "⚠ " + detail }]);
-    } finally {
-      setSending(false);
     }
   };
 
@@ -68,6 +92,7 @@ export default function ChatPlayground({ params }: { params: Promise<{ tenantId:
     setLastTokens(null);
     setSessionTokens(0);
     setLatencyMs(null);
+    syncedCountRef.current = 0;
   };
 
   return (
