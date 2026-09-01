@@ -25,7 +25,7 @@ async def test_chat(
     """
     result = await db.execute(
         select(Tenant).where(
-            Tenant.id == uuid.UUID(req.tenant_id),
+            Tenant.id == req.tenant_id,  # UUID-typed in schema → 422 on garbage
             Tenant.owner_id == user.id,
         )
     )
@@ -116,7 +116,7 @@ async def postiz_chat(
     """
     result = await db.execute(
         select(Tenant).where(
-            Tenant.id == uuid.UUID(req.tenant_id),
+            Tenant.id == req.tenant_id,
             Tenant.owner_id == user.id,
         )
     )

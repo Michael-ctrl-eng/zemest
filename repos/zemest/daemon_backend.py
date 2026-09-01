@@ -91,11 +91,17 @@ def start():
     if _db_needs_bootstrap():
         print("db missing/empty — running bootstrap_local.py ...")
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [sys.executable, "bootstrap_local.py"],
                 cwd=REPO, env=ENV, capture_output=True, timeout=180,
             )
-            print("bootstrap done")
+            if proc.returncode != 0:
+                # Surface the failure — a swallowed bootstrap error boots a
+                # backend that 500s on every request (bit us once already).
+                print(f"bootstrap FAILED (exit {proc.returncode}):")
+                print(proc.stderr.decode()[-800:] if proc.stderr else "(no stderr)")
+            else:
+                print("bootstrap done")
         except Exception as e:
             print(f"bootstrap failed (continuing): {e}")
     pid = os.fork()

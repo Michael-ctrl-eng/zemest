@@ -26,7 +26,7 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Zemest — AI Moderation Agents",
   description:
-    "Ready-made AI moderation agents for WhatsApp, Facebook, and Instagram. Rabbit v1 speaks Arabic with every accent. Rooster v1 speaks English with every accent. Understands voice, images, and text.",
+    "Ready-made AI agents that moderate your WhatsApp, Facebook, and Instagram chats. Rabbit v1 speaks every Arabic dialect; Rooster v1 covers English. They read text, voice, and images, check inventory, and close the sale.",
   keywords: [
     "Zemest",
     "AI moderation",
@@ -50,7 +50,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Zemest — AI Moderation Agents",
     description:
-      "Ready-made AI moderation agents for WhatsApp, Facebook, and Instagram. Rabbit v1 (Arabic) + Rooster v1 (English).",
+      "Ready-made AI agents that moderate your WhatsApp, Facebook, and Instagram chats. Rabbit v1 (every Arabic dialect) + Rooster v1 (English).",
     siteName: "Zemest",
     type: "website",
   },
@@ -58,7 +58,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Zemest — AI Moderation Agents",
     description:
-      "Ready-made AI moderation agents for WhatsApp, Facebook, and Instagram. Rabbit v1 (Arabic) + Rooster v1 (English).",
+      "Ready-made AI agents that moderate your WhatsApp, Facebook, and Instagram chats. Rabbit v1 (every Arabic dialect) + Rooster v1 (English).",
   },
 };
 

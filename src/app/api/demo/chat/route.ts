@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     });
   } catch {
     return NextResponse.json(
-      { reply: "Hmm, the shop went quiet for a second — please try again! 🙏", quick_replies: [] },
+      { reply: "The shop went quiet for a second — mind trying again? 🙏", quick_replies: [] },
       { status: 502 }
     );
   }

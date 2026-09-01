@@ -48,6 +48,14 @@ async function proxy(request: NextRequest, path: string[]) {
   }
   headers.delete("cookie");
 
+  // SECURITY: strip client-supplied forwarding headers. uvicorn's
+  // ProxyHeaders middleware (trusted on loopback) rewrites request.client
+  // from X-Forwarded-For — a spoofed value lets any caller pick their own
+  // rate-limit key and brute-force auth endpoints unthrottled.
+  headers.delete("x-forwarded-for");
+  headers.delete("x-real-ip");
+  headers.delete("x-forwarded-host");
+
   const init: RequestInit = {
     method: request.method,
     headers,
@@ -77,7 +85,7 @@ async function proxy(request: NextRequest, path: string[]) {
   } catch (e) {
     console.error("[BFF proxy] backend unreachable:", e);
     return NextResponse.json(
-      { detail: "The server woke up for a second — please try again, it responds instantly now." },
+      { detail: "The server is reconnecting — that request didn't reach it. Try again now." },
       { status: 502 }
     );
   }

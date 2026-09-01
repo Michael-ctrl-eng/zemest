@@ -1,14 +1,30 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+import uuid as _uuid
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class TestChatRequest(BaseModel):
     """Simulate a customer message for local testing without Facebook."""
 
-    tenant_id: str
+    # Typed as UUID: malformed values now fail Pydantic validation (422)
+    # instead of raising ValueError inside the handler (500 + traceback).
+    tenant_id: _uuid.UUID
     customer_name: str = "Test Customer"
-    message: str
+    # min_length blocks whitespace/empty bodies that used to run the whole
+    # pipeline, get rejected by the LLM provider, and persist an English
+    # fallback apology into an Arabic conversation. max_length bounds
+    # prompt size and latency (10KB used to cost 10.7k tokens / 5.5s).
+    message: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("message")
+    @classmethod
+    def _strip_message(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("message must not be empty or whitespace-only")
+        return v
 
     model_config = {
         "json_schema_extra": {

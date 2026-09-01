@@ -74,7 +74,10 @@ async def retrieve_context(
     kb = result.scalar_one_or_none()
 
     if not kb or not kb.tree_json:
-        return "", ""
+        # No knowledge tree yet → ground the LLM in the live products table
+        # instead of leaving the products prompt section empty (the model
+        # invented prices — E9 measured a 750 EGP quote for a 1850 EGP shoe).
+        return await _products_fallback(db, tenant_id), ""
 
     storage = kb.tree_json
 
@@ -86,12 +89,12 @@ async def retrieve_context(
         structure = storage.get("children", storage.get("structure", []))
 
     if not structure:
-        return "", ""
+        return await _products_fallback(db, tenant_id), ""
 
     # Build compact TOC (titles + summaries only — no full text)
     toc = _build_toc(structure)
     if not toc:
-        return "", ""
+        return await _products_fallback(db, tenant_id), ""
 
     # --- SPEED: avoid a second LLM round-trip per chat message -------------
     # (a) Small catalogs (the common case): include every node — the main
@@ -132,7 +135,7 @@ async def retrieve_context(
             logger.warning(f"Failed to track retrieval token usage: {e}")
 
     if not selected_ids:
-        return "", ""
+        return await _products_fallback(db, tenant_id), ""
 
     # Also include child node IDs (if a category is selected, include all its products)
     expanded_ids = set(selected_ids)
@@ -146,7 +149,37 @@ async def retrieve_context(
     # Fetch content from selected + expanded nodes
     products_text, knowledge_text = _extract_content(structure, list(expanded_ids))
 
+    # If the tree yielded no product content, still ground in live products
+    # so the agent never quotes made-up prices.
+    if not products_text:
+        products_text = await _products_fallback(db, tenant_id)
+
     return products_text, knowledge_text
+
+
+async def _products_fallback(db: AsyncSession, tenant_id) -> str:
+    """Format the live products table for the system prompt.
+
+    Used whenever the PageIndex tree is missing/empty — without it the
+    'المنتجات' section of the system prompt is empty and the model
+    hallucinates catalog prices. Best-effort: any failure degrades to the
+    previous (empty) behavior.
+    """
+    try:
+        from app.ai.prompts import get_product_context
+        from app.models.product import Product
+
+        res = await db.execute(
+            select(Product)
+            .where(Product.tenant_id == tenant_id, Product.is_active.is_(True))
+            .limit(50)
+        )
+        products = [p.to_dict() for p in res.scalars().all()]
+        if products:
+            return get_product_context(products)
+    except Exception as e:
+        logger.warning(f"products fallback failed: {e}")
+    return ""
 
 
 async def _select_nodes(toc: str, query: str, max_nodes: int) -> tuple[list[str], dict | None]:

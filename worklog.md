@@ -1396,3 +1396,89 @@ Stage Summary:
 - PLATFORM VERDICT: WORKS. 63/66 backend routes pass live (E1), 45/45 frontend→backend calls correctly wired with ZERO path/shape mismatches (E4), real LLM replies in Egyptian Arabic 0.9-1.2s (E9), silent trainer fires ≤45s after message batches with correct is_fallback filtering (E9), JWT/auth core solid: forged/tampered/expired tokens all rejected (E3), 20/22 dashboard+admin pages on real data (E5), channel connect validate-before-store REAL with live Graph calls (E6)
 - TOP ERRORS TO FIX (ranked): (1) X-Forwarded-For rate-limit bypass via BFF proxy [E2/E3]; (2) address governorate exact-match mischarges shipping: "Cairo" bills outside rate [E1]; (3) hallucination loop: empty knowledge_bases → invented prices baked into style exemplars [E9]; (4) fetchWithHeal re-POSTs non-idempotent requests on timeout [E2]; (5) register page is dead form [E3]; (6) webhook URL in channels UI 404s (Next origin path) [E6]; (7) Meta access tokens logged plaintext in backend.log [E6]; (8) alembic fully drifted (11/18 tables) [E8]; (9) uuid 500 + empty-message apology persisted [E9]; (10) only 4/92 routes rate-limited [E1]; (11) next-server RAM 1.74GB climbing [E10]; (12) tsc PageSectionProps + ignoreBuildErrors masking [E7]; (13) 41 orphan backend routes incl. oauth-url never called [E4]; (14) style page mock while backend has real data [E5]; (15) chat/conversations pages 100% mock [E7/R7]
 - TOP RESEARCH PICKS: Huey (SQLite-native durable jobs, replaces ARQ plan) [R3]; sqlite-vec (verified live in our exact stack) + FTS5 Arabic normalizer [R8]; arctic + authlib for real Meta OAuth [R1]; llama.cpp --lora per-tenant adapters + PEFT resume checkpoints [R4]; fasttext-numpy2-wheel (fixes live numpy crash) + sklearn partial_fit online classifier [R5]; APScheduler + icalendar [R6]; SSE via sse-starlette + wire installed-but-unused TanStack Query [R7/R9]; schemathesis + playwright + structlog wiring suite aimed at :3000 [R10]; bore tunnel for Meta webhooks [R2]
+
+---
+Task ID: G2
+Agent: G2 (github-research)
+Task: SQLite durability/backup research
+Work Log:
+- Read worklog context; confirmed live state: repos/zemest/zemest_local.db (400KB) + -wal (185KB) → ~1/3 of recent data only in WAL, so naive cp/rsync of the .db alone is unsafe; venv SQLite 3.53.1 (VACUUM INTO / backup API fully supported)
+- GitHub API research: hit unauth rate limit on direct repo calls (9 failed); switched to search/repositories with repo: qualifiers + raw.githubusercontent.com (README/license) — 10 repos covered: litestream, sqlite/sqlite, restic, borg, litefs (now superfly/), dqlite, healthchecks, kopia, s5cmd, litefs-backup
+- Empirically verified WAL-safety in-sandbox: live `VACUUM INTO` on the running daemon's DB → integrity_check ok, all 18 tables, clean 409,600-byte standalone snapshot (backup file deleted after test)
+- Wrote full ranked report (5 picks + runners-up, integration sketches, 4-layer architecture) → analysis/G2-backups.md
+Stage Summary:
+- Top picks: (1) sqlite3 VACUUM INTO + Connection.backup() — stdlib, WAL-safe, works in sandbox NOW, adopt immediately as nightly snapshot to a backups/ dir OUTSIDE repos/; (2) Litestream 14.3k★ Apache-2.0 — S3 streaming WAL replication + PITR, adopt at prod, zero app changes; (3) restic 35.8k★ BSD-2 — encrypted/dedup vault for the snapshot dir once a 2nd storage location exists; (4) healthchecks 10.3k★ BSD-3 — cron watchdog ping to catch silent backup death, ship with layer 1; (5) litefs/dqlite evaluated honestly = overkill for single-node (skip). Key insight: the WAL is larger than recent main-db data — any backup must go through the SQLite API; missing piece is just a ~30-line backup_db.py + cron.
+---
+Task ID: G5
+Agent: G5 (github-research)
+Task: Product analytics + SEO research
+Work Log:
+- Read worklog context; grounded current state in repos/zemest-platform: Next 16.1.1 app router, ~25 marketing routes, root metadata exists but NO metadataBase/canonical/OG-image, static public/robots.txt without Sitemap directive or dashboard/admin disallow, no sitemap.ts, no JSON-LD, zero analytics deps
+- GitHub REST API rate-limited from this IP (1 attempt, no data); pivoted to shields.io GitHub endpoints (stars/license/last-commit) + raw.githubusercontent.com README/LICENSE for 8 repos — all facts verified 2026-09-01
+- Analytics evaluated: umami (38k stars MIT, Postgres-only), plausible CE (29k stars AGPL, needs ClickHouse+Postgres), posthog (40k stars MIT-core, ClickHouse/Kafka/Redis too heavy), goatcounter (5.9k stars EUPL-1.2, single Go binary + SQLite), highlight.io (9.4k stars, 8GB RAM hobby floor → rejected)
+- SEO evaluated: next-sitemap (3.7k stars, Mar 2026 stale, superseded by Next native sitemap.ts/robots.ts), next-seo (pages-router era, skip), google/schema-dts (1.2k stars Apache-2.0, typed JSON-LD, 0KB runtime — keep), @vercel/analytics rejected (closed, no self-host)
+- Wrote full report with per-tool verdicts, integration sketches, final top-5 ranking + 8-point minimal SEO checklist → analysis/G5-analytics-seo.md
+Stage Summary:
+- Analytics: (1) GoatCounter — SQLite-native single Go binary, ~4.5KB script (or zero-JS pixel), <100MB RAM, best fit for small VPS + Egyptian-SMB trust story (cookieless); (2) Umami — MIT, best dashboard, reuses prod Postgres 16 already in compose. Plausible CE/PostHog = fallback/defer, highlight.io rejected.
+- SEO: zero new runtime deps — Next 16 native app/robots.ts (add Sitemap directive, disallow /dashboard /admin /api), app/sitemap.ts (static + blog slugs), metadataBase + per-page canonicals + generateMetadata, JSON-LD Organization/WebSite/SoftwareApplication/BreadcrumbList typed via google/schema-dts, OG image fix, EN/AR hreflang when Arabic ships.
+
+---
+Task ID: G1
+Agent: G1 (github-research)
+Task: Egypt payment gateway research (gap left by R1-R10)
+Work Log:
+- Read worklog tail + grepped repo: payments never covered; orders already model COD + manual wallet verification (payment_method cod/vodafone_cash/instapay/fawry, payment_phone_last2, payment_trx_id)
+- GitHub search API (11 calls, ≤20 budget): paymob, kashier, fawry, geidea, paymob+language:python, org:PaymobAccept, consolg, stripe-python, fawry+language:python, paymob+fastapi; raw-fetched READMEs/package manifests of all candidates
+- Read official PaymobAccept/Paymob-AI-Integration-Skill AGENTS.md + universal-prompt.md in full (Intention API, 3 HMAC-SHA512 types with exact field orders, piasters, MCP server mcp.paymob.com)
+- Confirmed: NO maintained Paymob Python SDK (official paymob-python 1★/2021; best community 35★/2023, legacy flow); Geidea = mobile/CMS SDKs only; Consolg = zero GitHub footprint; Stripe can't onboard Egyptian merchants; Nafezly/payments (491★) is Laravel-only
+- Wrote full report → analysis/G1-payments.md (ranked top-5, webhook signature patterns, COD+deposit workflow design, FastAPI integration sketch)
+Stage Summary:
+- TOP PICKS: (1) PaymobAccept/Paymob-AI-Integration-Skill — official, MIT, active (2026-08), ADOPT NOW: vendored knowledge for Intention API + HMAC-SHA512 webhook verification, wallet/BNPL/kiosk methods; (2) wpdynamo/egypt-pay — MIT zero-dep unified TS Kashier+Paymob, adopt for BFF or port ~200 lines to FastAPI; (3) PaymobAccept/API-Postman-Collections — living official API spec; (4) fawry-api/fawry (Ruby, 73★, active) — pattern donor for PAYATFAWRY COD deposits, NEXT; (5) stripe-python — SKIP (no Egyptian merchant onboarding)
+- STRATEGY: no Python SDK exists → hand-roll app/services/payments/paymob.py (httpx + Intention API + Token auth + 3-type HMAC verify, dedup on obj.id, one-txn compare-and-set) guided by the official skill; keep COD default, add deposit-to-confirm (عربون) via partial-amount wallet/kiosk Intention linked to governorate RTO risk; webhook-only state changes, never trust redirect params
+
+---
+Task ID: G4
+Agent: G4 (github-research)
+Task: Production deployment hardening research (VPS topology for FastAPI + Next.js)
+Work Log:
+- Read worklog + E10-runtime.md + next.config.ts + Caddyfile + repos/zemest docker-compose.yml/Dockerfile for current-state ground truth (loopback binding F10, daemon self-fork F14, in-process scheduler/queue, SQLite WAL, ~20 uncommitted files)
+- GitHub REST API quota was exhausted (60/60 used by other agents on the shared sandbox IP, reset 40min out) → fell back to curl of github.com repo pages, commits/releases atom feeds, releases/latest redirect probes, raw.githubusercontent docs (~10 curl invocations total); all metadata verified live
+- Collected repo data (stars/license/latest/last-commit/archived): caddyserver/caddy 75.4k★ Apache-2.0 v2.11.4 (daily commits); uvicorn now at Kludex/uvicorn (repo transferred from encode/, 301 verified) 10.9k★ BSD-3 0.52.4; gunicorn 10.7k★ MIT v26.2.0 (alive); systemd 16.6k★ v261.2; crowdsec 14.7k★ MIT v1.8.0 (daily); fail2ban 18.5k★ GPL-2+ 1.1.1; vercel/next.js 142k★ MIT v16.3.4 (sandbox=16.1.3); containrrr/watchtower ARCHIVED (v1.7.1/2023) → active fork nicholas-fedor/watchtower v1.21.2
+- Analyzed single-vs-multi-worker tradeoff for this specific app (in-process scheduler + inline queue + in-memory rate-limit/JWT-denylist + SQLite single-writer → exactly 1 worker; documented the Redis+external-scheduler migration path before ever scaling to w>1)
+- Wrote full report with concrete Caddyfile, hardened systemd units (zemest-api/zemest-web + optional socket-activation), CrowdSec sketch, memory budget, deploy flow, E10-linked hardening checklist → analysis/G4-deployment.md
+Stage Summary:
+- Topology pick: Caddy v2.11.4 (auto-TLS edge, only public listener) → loopback systemd units: node .next/standalone/server.js :3000 + uvicorn --workers 1 :8000 (bind 127.0.0.1, replaces daemon double-fork + fetchWithHeal), CrowdSec on Caddy JSON logs, SQLite nightly backups; systemd not Docker (repo compose targets a heavier Postgres stack); watchtower skipped (upstream archived); gunicorn deferred until w>1 is ever justified
+- Full report: /home/z/my-project/analysis/G4-deployment.md
+
+---
+Task ID: G3
+Agent: G3 (github-research)
+Task: Security scanning + CI research
+Work Log:
+- Read worklog (E10/X1/R10: JWT hardened, XFF fixed, PAT already exposed once, NO CI) + verified ground truth: no .github/ dir, repo is public merged monorepo (backend at repos/zemest tracked, .gitignore comment), pushes still blocked on PAT rotation
+- GitHub research: 15/15 calls (API quota dead -> HTML + commits.atom scrape, R10 fallback): gitleaks 29,044★ MIT, pip-audit 1,359★ MIT, codeql-action 1,631★ MIT, zizmor 6,425★ MIT (moved to zizmorcore org), bandit 8,249★ Apache-2.0, semgrep 16,458★ LGPL-2.1, trufflehog 27,644★ AGPL-3.0, gitleaks-action 641★ MIT @v3
+- Local validation (sandbox, no API): uvx pip-audit on repos/zemest/requirements.txt -> 38 known vulns / 10 pkgs incl. python-jose 3.3.0 (JWT algorithm-confusion pair), python-multipart x6, starlette 0.41.3 x9 (transitive via fastapi), litellm x10; uvx bandit -ll on app/ -> 1 HIGH (B324 sha1 silent_trainer.py:600) + 1 MED (B104 0.0.0.0); bun 1.3.14 has NO bun pm audit and bun pm scan needs bunfig scanner config (not turnkey)
+- Wrote full report -> analysis/G3-security-ci.md: ranked 5 + deferred table + 4-file pipeline (security.yml, codeql.yml, dependabot.yml, .pre-commit-config.yaml) + GitHub-native zero-YAML layer + 8-step roll-out
+Stage Summary:
+- TOP PICKS: (1) gitleaks+gitleaks-action — the PAT incident is exactly this failure mode, free for personal accounts; (2) pip-audit — proven 38 vulns incl. the whole auth stack, free PyPA/OSV; (3) CodeQL via github/codeql-action — injection SAST for py+ts, free on public repo, SARIF->Security tab; (4) zizmor — lint the CI we're about to add (day-1 third-party action risk); (5) bandit at -ll. Deferred: semgrep (CodeQL fallback if repo goes private), trufflehog (secret verification, AGPL), safety (commercial DB), betterer (no baseline), ruff (no S-rules, not a scanner)
+- Minimal pipeline = 2 workflows + dependabot.yml + pre-commit; ~5-7 min/run on free runners, all permissive licenses; step 0 = rotate PAT, then run gitleaks locally BEFORE the pending push (20+ uncommitted files)
+
+---
+Task ID: 21
+Agent: main-orchestrator
+Task: Push with new PAT; research-gap fleet (G1-G5); fix top errors; English copy polish; backup script
+
+Work Log:
+- PUSHED: all 7 queued commits (af12900..mode-normalization) to github.com/Michael-ctrl-eng/zemest main via user-provided PAT (push exit 0, origin/main == HEAD)
+- Sandbox reset AGAIN mid-session (venv deps wiped, DB deleted): recovered — reinstalled core deps, pinned bcrypt==4.1.3 (passlib 1.7.4 vs bcrypt 5.x hard crash), fixed daemon bootstrap wrapper that silently swallowed failures (now surfaces returncode + stderr)
+- FIXED (all verified live): (1) X-Forwarded-For rate-limit bypass — BFF proxy now strips x-forwarded-for/x-real-ip/x-forwarded-host; (2) governorate mischarging — normalize_governorate() with 27-key alias table (English/Arabic/folded-Arabic), "Cairo" now free-shipping not 60 EGP, unknown → 404; (3) hallucination loop — retriever falls back to live products table via get_product_context when PageIndex empty, verified agent quotes real 1850 EGP price; (4) register page dead form → AuthPage mode="get-started" (real API); (5) fetchWithHeal no longer re-POSTs non-idempotent requests on timeout (duplicate-order guard); (6) TestChatRequest: UUID-typed tenant_id + message min/max length (bad uuid → 422 not 500); (7) PageSectionProps.id (dead anchor links + last shipped tsc error → ZERO tsc errors in src/**)
+- ENGLISH POLISH (text-only, zero design changes): BFF 502 message ("server woke up" → clean reconnect message), demo chat fallback strings, modal error string, SEO metadata descriptions ("speaks Arabic with every accent" → "speaks every Arabic dialect"), register metadata
+- Research gap fleet G1-G5 (payments/EGP, backups, security-CI, deployment, analytics-SEO): reports in analysis/G*.md
+- NEW: scripts/backup_db.py — VACUUM INTO snapshots + integrity verify + retention + optional healthchecks ping; first seed backup taken (18 tables verified); backups/ outside repos/ so resets can't kill them
+- analysis/ROADMAP.md — consolidated 15-report adoption synthesis (adopt-now / this-quarter / prod-day / rejected)
+
+Stage Summary:
+- All work pushed to GitHub; PAT still needs rotation (now in chat history — rotate after use)
+- G3 finding: 38 known CVEs in requirements (python-jose 3.3.0 → upgrade to 3.4.0 urgent)
+- G2 finding: WAL holds ~1/3 of recent data — naive cp backups would be corrupt; VACUUM INTO script now live
+- Top research verdicts: Huey over ARQ (SQLite-native); Paymob hand-rolled with official MIT skill spec; GoatCounter for analytics; Caddy+systemd+single-worker uvicorn for prod; G3 CI pipeline ready to drop in

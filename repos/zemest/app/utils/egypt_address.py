@@ -258,11 +258,99 @@ def detect_governorate_from_text(text: str) -> str | None:
     """Detect Egyptian governorate from free text (Arabic or English)."""
     if not text:
         return None
+    hit = normalize_governorate(text)
+    if hit:
+        return hit
     normalized = text.lower().strip()
     for key, info in GOVERNORATES.items():
         if info["name_ar"] in text or key in normalized:
             return key
     return None
+
+
+# --- Governorate canonicalization -------------------------------------------
+#
+# Users (and LLM tool calls) send every conceivable spelling: "Cairo",
+# "CAIRO ", "Port Said", "port-said", "القاهره", "الاسكندريه", "el giza".
+# The old exact-match lookup silently billed the outside-Cairo rate for any
+# miss, mischarging real customers. normalize_governorate() maps all of the
+# above to the canonical GOVERNORATES key or returns None.
+
+_AR_NORM = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ة": "ه", "ى": "ي", "ؤ": "و", "ئ": "ي"})
+
+
+def _norm_ar(s: str) -> str:
+    """Fold Arabic variants (hamza forms, taa-marbuta, alef-maqsura)."""
+    return s.translate(_AR_NORM).strip()
+
+
+# Extra English spellings beyond the canonical keys themselves.
+_EXTRA_ALIASES: dict[str, list[str]] = {
+    "cairo": ["el cairo", "al qahira", "qahira", "masr"],
+    "giza": ["el giza", "gizeh", "jiza"],
+    "alexandria": ["alex", "eskandaria", "al iskandariyah"],
+    "port-said": ["portsaid", "borsaid", "bur said"],
+    "suez": ["elsuez", "as suways"],
+    "damietta": ["dumyat", "damyat"],
+    "dakahlia": ["dakahlia", "ad daqahliyah", "mansoura"],
+    "sharqia": ["sharkia", "ash sharqiyah", "zagazig"],
+    "qalyubia": ["qalyubia", "qalyubiya", "banha"],
+    "monufia": ["menoufia", "menofia", "minufiya", "shebin el kom"],
+    "gharbia": ["garbia", "gharbiya", "tanta"],
+    "beheira": ["behira", "behera", "damanhour"],
+    "kafr-el-sheikh": ["kfs", "kafr el sheikh", "kafr elsheikh"],
+    "fayoum": ["fayyum", "el fayoum", "elfayum"],
+    "beni-suef": ["bani suef", "bani sweif", "beni sweif"],
+    "minya": ["el minya", "menia", "minia", "el menia"],
+    "assiut": ["asuit", "asyut", "assuit", "asyut"],
+    "sohag": ["suhag", "sawhaj"],
+    "qena": ["qena", "quena", "kena"],
+    "luxor": ["al uqsur", "el uqsur", "al uqsar"],
+    "aswan": ["asswan", "asuan"],
+    "red-sea": ["al bahr al ahmar", "red sea", "hurghada", "al ghardaqah"],
+    "north-sinai": ["north sinai", "shamal sina", "arish", "al arish"],
+    "south-sinai": ["south sinai", "janub sina", "sharm", "sharm el sheikh", "dahab"],
+    "matrouh": ["marsa matrouh", "marsa matruh", "matruh"],
+    "new-valley": ["wadi gedid", "al wadi al jadid", "wadi al jadeed"],
+    "ismailia": ["ismailia", "esmailia"],
+}
+
+# Built once: every alias form (spaces/hyphens, English + Arabic + folded
+# Arabic) → canonical key.
+GOVERNORATE_LOOKUP: dict[str, str] = {}
+
+
+def _register_alias(key: str, *forms: str) -> None:
+    for f in forms:
+        f = f.lower().strip()
+        if f:
+            GOVERNORATE_LOOKUP.setdefault(f, key)
+            GOVERNORATE_LOOKUP.setdefault(f.replace("-", " "), key)
+            GOVERNORATE_LOOKUP.setdefault(f.replace(" ", "-"), key)
+            ar = _norm_ar(f)
+            if ar != f:
+                GOVERNORATE_LOOKUP.setdefault(ar, key)
+
+
+for _key, _info in GOVERNORATES.items():
+    _register_alias(_key, _key, _info.get("name_ar", ""))
+for _key, _forms in _EXTRA_ALIASES.items():
+    _register_alias(_key, *_forms)
+
+
+def normalize_governorate(raw: str | None) -> str | None:
+    """Canonicalize any spelling to a GOVERNORATES key, else None."""
+    if not raw:
+        return None
+    candidate = raw.lower().strip().replace("_", " ").replace("-", " ")
+    candidate = " ".join(candidate.split())
+    if not candidate:
+        return None
+    hit = GOVERNORATE_LOOKUP.get(candidate)
+    if hit:
+        return hit
+    folded = _norm_ar(candidate)
+    return GOVERNORATE_LOOKUP.get(folded)
 
 
 def get_governorates() -> list[dict]:

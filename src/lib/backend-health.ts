@@ -72,13 +72,27 @@ export function ensureBackend(): Promise<boolean> {
 
 /** Run a fetch against the backend; on a network error, heal once and retry.
  * A hung backend can never pin the UI: every attempt is bounded by a 30s
- * timeout (was unbounded → infinite spinner on worst-case stalls). */
+ * timeout (was unbounded → infinite spinner on worst-case stalls).
+ *
+ * DUPLICATE-SAFE RETRY: a timeout on a POST/PATCH/DELETE may mean the
+ * request *reached* the backend and only the response was lost — replaying
+ * it would double-create orders, messages and scheduled posts. So
+ * non-idempotent methods are only retried when the failure is a
+ * connection-level error (backend down, request never sent); timeouts
+ * surface immediately to the caller. */
+const IDEMPOTENT = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function isTimeout(e: unknown): boolean {
+  return e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+}
+
 export async function fetchWithHeal(
   path: string,
   init: RequestInit,
   maxAttempts = 2,
 ): Promise<Response> {
   let lastErr: unknown = null;
+  const method = (init.method ?? "GET").toUpperCase();
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       return await fetch(path, {
@@ -87,6 +101,11 @@ export async function fetchWithHeal(
       });
     } catch (e) {
       lastErr = e;
+      // Non-idempotent request that timed out: the backend may have already
+      // applied it. Retrying is not safe — fail fast instead.
+      if (!IDEMPOTENT.has(method) && isTimeout(e)) {
+        throw e;
+      }
       const healed = await ensureBackend();
       if (!healed) break;
     }

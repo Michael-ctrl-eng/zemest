@@ -162,7 +162,7 @@ export function AgentChatModal({ open, onClose }: { open: boolean; onClose: () =
       } catch {
         setMessages((m) => [
           ...m,
-          { role: "agent", text: "Oops, that message slipped away 🙈 Send it once more?" },
+          { role: "agent", text: "That message slipped away 🙈 Mind sending it again?" },
         ]);
         setError(true);
       } finally {

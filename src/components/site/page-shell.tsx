@@ -85,6 +85,8 @@ interface PageSectionProps {
   children: React.ReactNode;
   bg?: "grain" | "white" | "tan" | "dark" | "periwinkle";
   className?: string;
+  /** Anchor target — careers/partnerships hero CTAs link to #roles / #programs. */
+  id?: string;
 }
 
 const bgMap: Record<NonNullable<PageSectionProps["bg"]>, string> = {
@@ -95,9 +97,9 @@ const bgMap: Record<NonNullable<PageSectionProps["bg"]>, string> = {
   periwinkle: "bg-periwinkle-cloud",
 };
 
-export function PageSection({ children, bg = "grain", className = "" }: PageSectionProps) {
+export function PageSection({ children, bg = "grain", className = "", id }: PageSectionProps) {
   return (
-    <section className={`relative ${bgMap[bg]} border-b-[3px] border-[var(--tavus-terminal-black)] py-16 sm:py-24 ${className} overflow-hidden`}>
+    <section id={id} className={`relative ${bgMap[bg]} border-b-[3px] border-[var(--tavus-terminal-black)] py-16 sm:py-24 ${className} overflow-hidden`}>
       {/* Premium bitmap texture overlay */}
       {bg === "dark" ? (
         <div className="absolute inset-0 bg-halftone-white opacity-30 pointer-events-none" />
