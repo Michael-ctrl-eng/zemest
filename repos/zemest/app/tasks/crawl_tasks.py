@@ -4,13 +4,13 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from app.tasks.celery_app import celery_app
+from app.tasks.huey_app import huey_app
 
 logger = logging.getLogger(__name__)
 
 
 def _run_async(coro):
-    """Helper to run async code in Celery synchronous tasks."""
+    """Helper to run async code in Huey synchronous tasks."""
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)
@@ -18,8 +18,8 @@ def _run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=2)
-def run_crawl_pipeline(self, job_id: str, tenant_id: str, url: str, depth: int = 3):
+@huey_app.task(retries=2, retry_delay=30)
+def run_crawl_pipeline(job_id: str, tenant_id: str, url: str, depth: int = 3):
     """Full crawl pipeline: crawl -> extract products -> build knowledge index."""
     _run_async(_crawl_pipeline_async(job_id, tenant_id, url, depth))
 

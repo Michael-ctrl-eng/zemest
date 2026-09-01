@@ -1,7 +1,8 @@
-"""Celery task to publish scheduled posts at their scheduled time.
+"""Huey task to publish scheduled posts at their scheduled time.
 
-Runs every minute, finds posts due for publishing, publishes them via
-FB/IG Graph API, and updates their status.
+APScheduler triggers this every 30s (app/main.py lifespan — previously
+Celery beat every minute + the 30s inline worker loop); it finds posts due
+for publishing, publishes them via FB/IG Graph API, and updates status.
 """
 import asyncio
 import logging
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
 
-from app.tasks.celery_app import celery_app
+from app.tasks.huey_app import huey_app
 from app.database import async_session
 from app.models.scheduled_post import ScheduledPost
 from app.models.tenant import Tenant
@@ -22,11 +23,11 @@ logger = logging.getLogger(__name__)
 MAX_PUBLISH_RETRIES = 3
 
 
-@celery_app.task(name="publish_scheduled_posts")
+@huey_app.task(name="publish_scheduled_posts")
 def publish_scheduled_posts():
     """Find and publish all posts scheduled for now or earlier.
 
-    Runs every minute via Celery beat.
+    Scheduled by APScheduler every 30s (see app/main.py lifespan).
     """
     return _run_async(_publish_due_posts_async())
 
@@ -243,7 +244,7 @@ async def _publish_to_instagram(post: ScheduledPost, tenant: Tenant) -> str:
 
 
 def _run_async(coro):
-    """Run an async coroutine from sync Celery context."""
+    """Run an async coroutine from sync Huey context."""
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)

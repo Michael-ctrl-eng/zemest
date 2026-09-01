@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
@@ -70,21 +70,58 @@ async def get_calendar_url(
 
 
 # ============================================================
-# The ICS feed (public, token-authenticated)
+# The ICS feed (public, token-authenticated) — RFC 5545 via icalendar
 # ============================================================
-
-def _ics_escape(text: str) -> str:
-    return (
-        text.replace("\\", "\\\\")
-        .replace(";", "\\;")
-        .replace(",", "\\,")
-        .replace("\r\n", "\\n")
-        .replace("\n", "\\n")
-    )[:2000]
+# The hand-rolled line emitter was replaced with the icalendar library
+# (roadmap R6): it handles content-line folding at 75 octets, correct
+# escaping of commas/semicolons/newlines, and VTIMEZONE blocks — things the
+# old emitter got subtly wrong, which some calendar clients reject.
 
 
-def _ics_dt(dt: datetime) -> str:
-    return dt.strftime("%Y%m%dT%H%M%SZ") if dt else ""
+def _ics_dt(dt: datetime) -> datetime:
+    """Normalize a datetime to the UTC-aware form icalendar expects.
+
+    Scheduled-post timestamps are stored naive-UTC (datetime.utcnow()),
+    so attach UTC when the value is naive; aware values pass through.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _build_ics(tenant: Tenant, posts) -> bytes:
+    from icalendar import Calendar, Event
+
+    cal = Calendar()
+    cal.add("prodid", "-//Zemest//Post Scheduler//EN")
+    cal.add("version", "2.0")
+    cal.add("calscale", "GREGORIAN")
+    cal.add("method", "PUBLISH")
+    cal.add("x-wr-calname", f"Zemest — {tenant.page_name}")
+    cal.add("x-wr-timezone", "UTC")
+
+    now = _ics_dt(datetime.utcnow())
+    for p in posts:
+        start = _ics_dt(p.scheduled_at)
+        end = start + timedelta(minutes=30)
+        status = "CONFIRMED" if p.status == "scheduled" else (
+            "TRANSPARENT" if p.status in ("published", "publishing") else "CANCELLED"
+        )
+        summary = f"[{p.platform.upper()}] {p.caption[:60]}" if p.caption else f"[{p.platform.upper()}] post"
+        if p.status == "published":
+            summary = f"✓ {summary}"
+
+        ev = Event()
+        ev.add("uid", f"{p.id}@zemest")
+        ev.add("dtstamp", now)
+        ev.add("dtstart", start)
+        ev.add("dtend", end)
+        ev.add("summary", summary)
+        ev.add("description", p.caption or "")
+        ev.add("status", status)
+        cal.add_component(ev)
+
+    return cal.to_ical()
 
 
 @router.get("/calendar/{token}/calendar.ics")
@@ -110,41 +147,7 @@ async def calendar_ics(token: str):
         )
         posts = result.scalars().all()
 
-    # ICS requires CRLF line endings
-    lines = [
-        "BEGIN:VCALENDAR",
-        "VERSION:2.0",
-        "PRODID:-//Zemest//Post Scheduler//EN",
-        "CALSCALE:GREGORIAN",
-        "METHOD:PUBLISH",
-        f"X-WR-CALNAME:{_ics_escape(f'Zemest — {tenant.page_name}')}",
-        "X-WR-TIMEZONE:UTC",
-    ]
-
-    for p in posts:
-        start = p.scheduled_at
-        end = start + timedelta(minutes=30)
-        status = "CONFIRMED" if p.status == "scheduled" else (
-            "TRANSPARENT" if p.status in ("published", "publishing") else "CANCELLED"
-        )
-        summary = f"[{p.platform.upper()}] {p.caption[:60]}" if p.caption else f"[{p.platform.upper()}] post"
-        if p.status == "published":
-            summary = f"✓ {summary}"
-
-        lines += [
-            "BEGIN:VEVENT",
-            f"UID:{p.id}@zemest",
-            "DTSTAMP:" + _ics_dt(datetime.utcnow()),
-            "DTSTART:" + _ics_dt(start),
-            "DTEND:" + _ics_dt(end),
-            f"SUMMARY:{_ics_escape(summary)}",
-            f"DESCRIPTION:{_ics_escape(p.caption)}",
-            f"STATUS:{status}",
-            "END:VEVENT",
-        ]
-
-    lines.append("END:VCALENDAR")
-    body = "\r\n".join(lines) + "\r\n"
+    body = _build_ics(tenant, posts)
 
     return Response(
         content=body,

@@ -597,4 +597,4 @@ def _profile_signature(counts: dict, tenant_id: uuid.UUID) -> str:
         TRAINER_VERSION, CLASSIFIER_VERSION, tenant_id,
         counts.get("total", 0), counts.get("commerce", 0), counts.get("junk", 0),
     ))
-    return hashlib.sha1(raw.encode()).hexdigest()[:16]
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]

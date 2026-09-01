@@ -1,4 +1,4 @@
-"""Celery tasks for rebuilding per-tenant personality/style profiles."""
+"""Huey tasks for rebuilding per-tenant personality/style profiles."""
 
 import asyncio
 import logging
@@ -6,13 +6,13 @@ import uuid
 
 from sqlalchemy import select
 
-from app.tasks.celery_app import celery_app
+from app.tasks.huey_app import huey_app
 
 logger = logging.getLogger(__name__)
 
 
 def _run_async(coro):
-    """Helper to run async code in Celery synchronous tasks."""
+    """Helper to run async code in Huey synchronous tasks."""
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(coro)
@@ -20,12 +20,14 @@ def _run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=1)
-def rebuild_all_personalities(self):
+@huey_app.task(retries=1)
+def rebuild_all_personalities():
     """Iterate all active tenants and rebuild their style/knowledge profiles.
 
-    Scheduled weekly via Celery beat (see celery_app.beat_schedule).
-    Safe to run manually: ``rebuild_all_personalities.delay()``.
+    Scheduled weekly via APScheduler (app/main.py lifespan — replaces the
+    old Celery beat entry). Safe to run manually: enqueue by calling
+    ``rebuild_all_personalities()`` (Huey semantics) or run inline via
+    ``rebuild_all_personalities.call_local()``.
     """
     _run_async(_rebuild_all_personalities_async())
 
@@ -55,8 +57,8 @@ async def _rebuild_all_personalities_async():
                 )
 
 
-@celery_app.task(bind=True, max_retries=1)
-def rebuild_tenant_personality(self, tenant_id: str):
+@huey_app.task(retries=1)
+def rebuild_tenant_personality(tenant_id: str):
     """Rebuild a single tenant's personality (async dispatch helper)."""
     _run_async(_rebuild_tenant_personality_async(tenant_id))
 

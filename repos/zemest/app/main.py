@@ -94,6 +94,11 @@ async def lifespan(app: FastAPI):
                 ("orders", "api_external_id", "VARCHAR(100)"),
                 # --- Admin / security tables (idempotent) ---
                 ("users", "is_superadmin", "BOOLEAN DEFAULT FALSE"),
+                # --- Paymob online payments (deposit-to-confirm flow) ---
+                ("orders", "payment_status", "VARCHAR(30)"),
+                ("orders", "deposit_amount", "NUMERIC(12,2)"),
+                ("orders", "paymob_intention_id", "VARCHAR(100)"),
+                ("orders", "paymob_transaction_id", "VARCHAR(64)"),
             ]
             for table, col, coltype in migrations:
                 try:
@@ -221,21 +226,95 @@ async def lifespan(app: FastAPI):
     except Exception:
         # DB may not be ready yet — but never SILENTLY: the operator must see it
         _mlog.getLogger("app.main").error("Startup migration block failed", exc_info=True)
+
+    # --- Background jobs: APScheduler + Huey (single-process design) ------
+    # Replaces the hand-rolled 30s/45s asyncio worker loops (the deleted
+    # inline_worker.py / training_worker.py loops) and the dead Celery beat
+    # schedule: exact-time triggers, tz-aware cron, coalescing,
+    # max_instances=1 so a slow cycle can never stack on itself.
+    scheduler = None
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+        scheduler = AsyncIOScheduler(timezone="Africa/Cairo")
+
+        async def _publish_job():
+            from app.tasks.scheduling_tasks import _publish_due_posts_async
+            await _publish_due_posts_async()
+
+        async def _trainer_job():
+            from app.tasks.training_worker import training_cycle_once
+            await training_cycle_once()
+
+        async def _personality_job():
+            from app.tasks.style_tasks import _rebuild_all_personalities_async
+            await _rebuild_all_personalities_async()
+
+        if str(getattr(settings, "SCHEDULER_INLINE_WORKER", True)).lower() in (
+            "1", "true", "yes", "on",
+        ):
+            # 30s interval = the old inline worker cadence: posts publish
+            # within ~30s of their scheduled time; coalesce catches up after
+            # a sleep/restart without hot-looping.
+            scheduler.add_job(
+                _publish_job, "interval", seconds=30,
+                id="publish-due-posts", max_instances=1, coalesce=True,
+            )
+        else:
+            _mlog.getLogger("app.main").info(
+                "Publish job disabled via SCHEDULER_INLINE_WORKER (external worker owns it)")
+
+        if str(getattr(settings, "SILENT_TRAINER_INLINE_WORKER", True)).lower() in (
+            "1", "true", "yes", "on",
+        ):
+            scheduler.add_job(
+                _trainer_job, "interval", seconds=45,
+                id="silent-trainer", max_instances=1, coalesce=True,
+            )
+        else:
+            _mlog.getLogger("app.main").info(
+                "Silent trainer disabled via SILENT_TRAINER_INLINE_WORKER")
+
+        # Weekly personality rebuild — Sunday 03:00 Cairo (was Celery beat).
+        scheduler.add_job(
+            _personality_job, "cron", day_of_week="sun", hour=3, minute=0,
+            id="rebuild-personality-weekly", max_instances=1, coalesce=True,
+        )
+        scheduler.start()
+        _mlog.getLogger("app.main").info(
+            "APScheduler started (publish 30s, trainer 45s, weekly rebuild Sun 03:00 Cairo)")
+    except Exception:
+        _mlog.getLogger("app.main").warning("APScheduler failed to start", exc_info=True)
+
+    # Huey embedded consumer — durable SQLite queue for crawl/notification
+    # tasks (starts only when HUEY_INLINE_CONSUMER=true; harmless when off —
+    # callers fall back to BackgroundTasks).
+    try:
+        from app.tasks.huey_app import start_huey_consumer
+        start_huey_consumer()
+    except Exception:
+        _mlog.getLogger("app.main").warning("Huey consumer failed to start", exc_info=True)
+
     yield
     # Shutdown
+    try:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+    except Exception:
+        pass
+    try:
+        from app.tasks.huey_app import stop_huey_consumer
+        stop_huey_consumer()
+    except Exception:
+        pass
     try:
         from app.ai.llm_client import close_client
         await close_client()
     except Exception:
         pass
     try:
-        from app.tasks.inline_worker import stop_inline_scheduler
-        stop_inline_scheduler()
-    except Exception:
-        pass
-    try:
-        from app.tasks.training_worker import stop_inline_trainer
-        stop_inline_trainer()
+        from app.services.payments.paymob import close_client as _close_paymob
+        await _close_paymob()
     except Exception:
         pass
     await engine.dispose()
@@ -317,23 +396,9 @@ from app.api.router import api_router  # noqa: E402
 
 app.include_router(api_router)
 
-# Inline scheduler worker — publishes due posts inside this process
-# (Celery+Redis optional; this deployment uses the in-process loop).
-try:
-    from app.tasks.inline_worker import start_inline_scheduler  # noqa: E402
-    start_inline_scheduler(app)
-except Exception:  # noqa: BLE001
-    import logging as _wlog
-    _wlog.getLogger(__name__).warning("Inline scheduler worker failed to start", exc_info=True)
-
-# Silent trainer worker — classifies junk vs commerce chats and builds each
-# page's style profile automatically, invisibly, with crash-safe resume.
-try:
-    from app.tasks.training_worker import start_inline_trainer  # noqa: E402
-    start_inline_trainer(app)
-except Exception:  # noqa: BLE001
-    import logging as _tlog
-    _tlog.getLogger(__name__).warning("Silent trainer worker failed to start", exc_info=True)
+# Background jobs are owned by the APScheduler + Huey consumer started in
+# the lifespan above (publish-due-posts, silent-trainer, weekly personality
+# rebuild, durable crawl/notification queue). No module-level worker loops.
 
 # Register admin REST API (block/unblock/ip-bans/analytics/audit-log).
 # Must be included BEFORE setup_admin so the routes exist regardless of

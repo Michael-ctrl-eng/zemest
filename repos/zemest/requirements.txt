@@ -1,8 +1,10 @@
 # Core
-fastapi==0.115.6
+fastapi>=0.118.0
 uvicorn[standard]==0.34.0
-pydantic[email]==2.10.4
-pydantic-settings==2.7.1
+pydantic[email]>=2.10.4
+pydantic-settings>=2.7.1
+# starlette SessionMiddleware (app/main.py) — was transitively provided before
+itsdangerous>=2.2.0
 
 # Database
 sqlalchemy[asyncio]==2.0.36
@@ -11,39 +13,42 @@ alembic==1.14.1
 psycopg2-binary==2.9.11
 
 # Auth
-python-jose[cryptography]==3.3.0
+# python-jose 3.4.0: fixes CVE-2024-33663 algorithm confusion + CVE-2024-33664 JWE
+python-jose[cryptography]>=3.4.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.3
-python-multipart==0.0.20
+python-multipart>=0.0.31
 
 # HTTP Client
 httpx==0.28.1
 
-# Task Queue
-celery[redis]==5.4.0
-redis==5.2.1
+# Task Queue — Huey (SQLite-native; replaces Celery+Redis which were dead
+# weight in this single-process deployment) + APScheduler for exact-time
+# periodic jobs in the uvicorn lifespan (replaces hand-rolled 30s loop).
+huey>=3.3.0  # 3.x API: filename= kwarg, thread consumer
+apscheduler>=3.11,<4.0
 
 # Web Crawling & Content Extraction
 trafilatura==2.0.0
 beautifulsoup4==4.12.3
 
 # Templating
-jinja2==3.1.5
+jinja2>=3.1.6
 
 # PageIndex (self-hosted) + LLM routing
-litellm>=1.82.0
+litellm>=1.84.0
 pyyaml>=6.0
 
 # Voice transcription (local, free)
 faster-whisper>=1.0.0
 
 # Admin panel + security middleware
-sqladmin>=0.19.0
+sqladmin>=0.25.1
 slowapi>=0.1.9
 geoip2>=4.8.0
 
 # Utilities
-python-dotenv==1.0.1
+python-dotenv>=1.2.2
 aiofiles==24.1.0
 structlog>=24.1.0
 
@@ -60,7 +65,7 @@ pytest-playwright>=0.5.0
 mutmut>=3.0.0
 
 # Email
-aiosmtplib==3.0.2
+aiosmtplib>=5.1.2
 
 # Fuzzy matching
 python-Levenshtein==0.26.1
@@ -72,7 +77,16 @@ playwright==1.58.0
 # detection if these are not installed, but installing them enables
 # 26-class Arabic dialect ID and GlotLID sentence-level LID).
 camel-tools>=1.5.0
-fasttext-wheel>=0.2.5
+# numpy-2-compatible fasttext wheels (fasttext-wheel crashes on model.predict
+# under numpy 2: ValueError about memory copy)
+fasttext-numpy2-wheel>=0.1.0
 
 # Python 3.9 compatibility
 eval_type_backport==0.3.1
+
+# Calendar (RFC-5545-compliant ICS feed: folding, RRULE, VTIMEZONE)
+icalendar>=6.0.0
+python-dateutil>=2.9.0
+
+# SQLite vector search (optional loadable extension; guarded load)
+sqlite-vec>=0.1.6

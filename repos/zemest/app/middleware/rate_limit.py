@@ -116,7 +116,12 @@ def _build_limiter() -> "Limiter":
                 storage_uri,
             )
             storage_uri = "memory://"
-    return Limiter(key_func=get_rate_limit_key, storage_uri=storage_uri)
+    return Limiter(
+        key_func=get_rate_limit_key,
+        storage_uri=storage_uri,
+        # Master switch (tests set RATELIMIT_ENABLED=false — see config.py)
+        enabled=bool(getattr(settings, "RATELIMIT_ENABLED", True)),
+    )
 
 
 def get_limiter() -> "Limiter":

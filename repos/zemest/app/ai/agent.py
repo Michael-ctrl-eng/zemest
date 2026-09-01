@@ -443,16 +443,21 @@ async def _create_order_from_data(
 
         logger.info(f"Order {order.order_number} created: {len(items)} items")
 
-        # Dispatch notification asynchronously via Celery; fall back to a
-        # direct call if Celery/Redis is unavailable so we never silently
-        # swallow a brand-new order.
+        # Dispatch notification via the Huey queue when a consumer is alive;
+        # fall back to a direct await when it isn't (single-process mode) so
+        # we never silently swallow a brand-new order.
         try:
+            from app.tasks.huey_app import huey_consumer_running
             from app.tasks.notification_tasks import send_order_notification
-            send_order_notification.delay(str(tenant.id), str(order.id))
+            if huey_consumer_running():
+                # Huey semantics: calling the task ENQUEUES it (durable).
+                send_order_notification(str(tenant.id), str(order.id))
+            else:
+                await notify_new_order(tenant, order)
         except Exception as notify_err:
             logger.warning(
-                f"Celery dispatch failed ({notify_err}); falling back to "
-                f"synchronous notify_new_order"
+                f"Huey notification dispatch failed ({notify_err}); falling "
+                f"back to synchronous notify_new_order"
             )
             try:
                 await notify_new_order(tenant, order)

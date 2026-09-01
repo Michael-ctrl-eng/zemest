@@ -44,37 +44,26 @@ async def start_crawl(
     job_id = str(job.id)
     tenant_id = str(tenant.id)
 
-    # Try Celery first (only if a worker is actually running), fallback to BackgroundTasks.
-    # The sync inspect.ping() blocks the event loop (~1s) — it now runs in a
-    # thread AND is skipped entirely when no broker is configured (sandbox).
-    celery_dispatched = False
+    # Dispatch to the Huey worker when its consumer is alive (durable queue +
+    # retries, no broker needed); otherwise run inline via BackgroundTasks —
+    # the single-process sandbox default keeps working unchanged.
+    # (job.celery_task_id keeps its legacy column name; it stores the Huey label.)
+    huey_dispatched = False
     try:
-        from app.config import get_settings as _gs
-        _broker = (getattr(_gs(), "REDIS_URL", "") or "").strip()
-        if not _broker:
-            raise RuntimeError("no broker configured (REDIS_URL empty)")
-        import asyncio as _asyncio
-        from app.tasks.celery_app import celery_app
-        # Ping workers with short timeout — if no worker responds, use fallback
-        inspect = celery_app.control.inspect(timeout=1)
-        try:
-            active_workers = await _asyncio.to_thread(inspect.ping)
-        except Exception as ping_err:
-            logger.debug(f"Celery ping failed: {ping_err}")
-            active_workers = None
-        if active_workers:
+        from app.tasks.huey_app import huey_consumer_running
+        if huey_consumer_running():
             from app.tasks.crawl_tasks import run_crawl_pipeline
-            task = run_crawl_pipeline.delay(job_id, tenant_id, req.url, req.depth)
-            job.celery_task_id = task.id
+            run_crawl_pipeline(job_id, tenant_id, req.url, req.depth)  # enqueues
+            job.celery_task_id = f"huey:{job_id}"
             await db.flush()
-            celery_dispatched = True
-            logger.info(f"Crawl job {job_id} dispatched to Celery worker")
+            huey_dispatched = True
+            logger.info(f"Crawl job {job_id} dispatched to Huey worker")
         else:
-            logger.info("No Celery workers found, using BackgroundTasks")
+            logger.info("No Huey consumer running, using BackgroundTasks")
     except Exception as e:
-        logger.warning(f"Celery unavailable ({e}), using BackgroundTasks fallback")
+        logger.warning(f"Huey dispatch failed ({e}), using BackgroundTasks fallback")
 
-    if not celery_dispatched:
+    if not huey_dispatched:
         # Run inline via FastAPI BackgroundTasks
         background_tasks.add_task(
             _run_crawl_inline, job_id, tenant_id, req.url, req.depth

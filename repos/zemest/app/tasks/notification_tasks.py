@@ -1,12 +1,12 @@
 import asyncio
 import uuid
 
-from app.tasks.celery_app import celery_app
+from app.tasks.huey_app import huey_app
 
 
-@celery_app.task
+@huey_app.task(retries=1)
 def send_order_notification(tenant_id: str, order_id: str):
-    """Send order notification asynchronously."""
+    """Send order notification asynchronously (Huey queue)."""
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(_send_notification(tenant_id, order_id))

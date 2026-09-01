@@ -29,6 +29,14 @@ class Order(Base):
     payment_method: Mapped[str] = mapped_column(String(30), default="cod")
     payment_phone_last2: Mapped[Optional[str]] = mapped_column(String(10))
     payment_trx_id: Mapped[Optional[str]] = mapped_column(String(50))
+    # Online payment (Paymob Intention — deposit-to-confirm / عربون flow).
+    # COD stays the default; these only fill in when a gateway flow runs.
+    # payment_status state machine: pending_deposit → deposit_paid | failed;
+    # deposit_paid → paid (full amount); terminal states never regress.
+    payment_status: Mapped[Optional[str]] = mapped_column(String(30))  # pending_deposit / deposit_paid / paid / failed
+    deposit_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))  # intended deposit (EGP)
+    paymob_intention_id: Mapped[Optional[str]] = mapped_column(String(100))  # Intention id from create_intention
+    paymob_transaction_id: Mapped[Optional[str]] = mapped_column(String(64))  # last webhook obj.id (dedup guard)
     # External API call tracking
     api_status: Mapped[Optional[str]] = mapped_column(String(20))  # success, failed, pending, not_configured
     api_response: Mapped[Optional[str]] = mapped_column(Text)  # raw response body
