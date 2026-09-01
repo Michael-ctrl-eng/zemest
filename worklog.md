@@ -1050,3 +1050,332 @@ Stage Summary:
 - Admin: fully real data; remaining "—" fields are backend gaps (no GET /admin/users list endpoint), documented in agent-ctx/19-admin-api-wiring.md
 - GIT PUSH BLOCKED: rotate the exposed PAT and provide new credentials; commits af12900, 898a514, 4cf7f17 await push
 - Recommended next (from 18-d research): ARQ for durable background jobs (self-training + scheduler off request path), Tenacity backoff decorators, LiteLLM router finishing llm_gateway.py, Uptime-Kuma watchdog
+
+---
+Task ID: R9
+Agent: R9 (github-research)
+Task: Next.js performance tooling research (research-only, zero code changes)
+
+Work Log:
+- Read worklog Tasks 18/19 + ground-truthed the local stack first: project is actually **Next 16.1.3 with Turbopack already the default dev bundler** (dev.log line 1), `@tanstack/react-query` 5.90.19 installed-but-never-imported, `sharp` 0.34.5 installed, `reactCompiler` exists as top-level next-config key in installed 16.1.3 types
+- GitHub API research (~25 calls, search API after core /repos hit per-IP limits): vercel/next.js 142k★, TanStack/query 50.2k★, lovell/sharp 32.6k★, vercel/swr 32.5k★, aidenybai/react-scan 21.8k★, welldone/why-did-you-render 12.5k★ (npm dead since 2020), GoogleChrome/workbox 13k★, shadowwalker/next-pwa 4.1k★ (dead 2024), serwist 1.5k★ (active), k0d13/next-ws 325★ (active, patch-based); npm registry for versions/licensing (babel-plugin-react-compiler 1.0.0 stable 2025-10-07, @next/bundle-analyzer 16.3.4 versioned with next, next latest 16.3.4)
+- Scored every tool on app-router compat, dev benefit, prod benefit, bundle impact, license; wrote per-tool verdicts + integration sketches + ranked top-5 to analysis/R9-frontend-perf.md (separate dev-mode vs prod sections)
+- Skips with reasons: SWR (redundant — react-query already installed), @next/bundle-analyzer (webpack-only, unusable on Turbopack-default builds), next-pwa (dead), why-did-you-render (superseded by react-scan), image-export optimizers (N/A for standalone output)
+
+Stage Summary:
+- Top picks: (1) wire the already-installed TanStack Query v5 to kill dashboard/admin waterfalls + get cross-page cache/dedupe/scoped invalidation (zero new deps); (2) react-scan dev-only profiling of the 100%-client dashboard; (3) React Compiler 1.0 via one-line `reactCompiler: true` (verified key + Turbopack Babel path in installed next); (4) keep Turbopack + patch-upgrade 16.1.3→16.3.4; (5) verify sharp lands in the .next/standalone trace after prod build (avif/webp already configured; dev-unoptimized images are by-design, not a bug)
+---
+Task ID: E5
+Agent: E5 (error-finder)
+Task: Dashboard data source audit (mock vs real)
+
+Work Log:
+- Read worklog (Task 18/19 context honored — no re-reports); read all 13 dashboard page files + layout + shared dash/mobile-sidebar components and all 8 admin pages + admin layout in /home/z/my-project (live dev tree, not repos/zemest-platform).
+- Traced every page to its BFF endpoint via src/lib/zemest-api.ts; grepped for mock/sample/fake/TODO/hardcoded-array patterns (only hits: style page "Coming soon", settings "channels coming soon").
+- Live-tested all 13 underlying GET endpoints on :8000 with an owner JWT (login owner@cairo-sneakers.com) + conversation detail + style-profile probe; tested the BFF proxy through :3000 with and without cookie (200 / 401).
+- curl-fetched all 13 dashboard routes + 8 admin routes on :3000 with auth cookies (owner + superadmin admin@zemest.ai): all 200, no error boundaries; no-cookie requests correctly 307→/login?redirect=…; bogus tenantId renders shell + client-side ErrorState (no crash).
+- Verified empty-state behavior against the fresh DB (0 orders, 0 crawl jobs, 0 posts, empty top_products/recent_orders, insights null): all pages render EmptyState, none crash or fabricate numbers.
+- Cross-checked frontend field assumptions against backend schemas (TenantResponse, ConversationResponse) and the live payloads — found dead field paths (ig_user_id/wa_phone_number_id never in response; list conversations omit messages).
+- Wrote full report: analysis/E5-dashboard-data.md (classification table + 9 findings w/ severity).
+
+Stage Summary:
+- 22 page files audited: 20 REAL / 1 PARTIAL (settings: real business fields + mock channels stub) / 1 MOCK (style page).
+- Top findings (not fixed): style page is a mock stub while GET /tenants/{id}/style-profile returns a 200 BUILT profile (HIGH); conversations list "Last message" column always "—" because list API omits messages (MED); dashboard-home IG/WA channel chips read fields the backend never returns so they can never show connected (MED); chat playground owner-mode toggle doesn't change the endpoint and suppresses errors (MED); stale "channels coming soon" mock in settings + insights CTA misdirects to settings instead of /channels (MED); silent per-tenant stats catch renders zeros (LOW/MED); money formatting inconsistent egp() vs toLocaleString() (LOW).
+
+---
+Task ID: E10
+Agent: E10 (error-finder)
+Task: Runtime/environment/security posture audit
+
+Work Log:
+- Read worklog (Tasks 18/19) for reset context; confirmed reset residue: repo .venv gone, /home/z/.venv active, /tmp/backend.log stale "stopped", backend.pid(1887) matches live uvicorn
+- Process census: 1 next dev chain (1077→1079→1080→1093, single start 00:30:58, no restarts), 1 uvicorn (1887, PPID 1, started 00:49:30, stable); no zombies/duplicates in project tree (1 infra zombie start.sh parented by caddy); RAM 3.9G no swap
+- Disk: / 33% used; node_modules 1.2G, .next 126M — no pressure. Memory finding: next-server RSS 880MB→1.74GB in 30 min (42% RAM, climbing)
+- Log census backend.log (1293 lines, 24 tracebacks): ALL errors from reset window 00:46–00:49 (old-venv FileNotFoundError, no-such-table ×10 pre-bootstrap, sqladmin/slowapi missing, worker cycle fails) — ZERO errors since process 1887 started; LLM 200s via internal-api.z.ai; benign passlib/bcrypt warning. dev.log: clean boot, no restarts; Next 16.1.3 (not 15 as worklog says)
+- Env: .env gitignored (Prisma SQLite path only, perms 755); repos/zemest/.env absent (daemon ENV + defaults); .jwt_secret exists 64-chars perms 600 gitignored (NOT printed); listed all prod gaps (FB keys, OpenRouter/Gemini, SMTP, Postiz, FB_VERIFY_TOKEN default)
+- Security greps: NO hardcoded secrets in src/** or app/** (only test fixtures); JWT HS256 pinned + exp required + persistent secret; cookies httpOnly (+Secure/None/Partitioned on HTTPS); backend security headers verified live (CSP/XFO/etc) but Next.js frontend has NONE; middleware /admin superadmin check is a stub (cookie-presence only); bot-detection is log-only by design; no CORS middleware (BFF-only, secure default); no debug=True
+- Ports: 3000/8000 on all interfaces (sandbox OK, prod → 127.0.0.1); other listeners are infra (caddy :81, ZAI 19001/19005/19006/12600); no 5432/6379 as designed
+- Health curls: :3000/ 200 @109ms; /dashboard 307→login; BFF /auth/me 401; :8000/ 200 @1.9ms; /docs 200
+- Wrote full report → analysis/E10-runtime.md (14 findings F1–F14, secrets redacted)
+
+Stage Summary:
+- TOP: (1) HIGH next-server memory 880MB→1.74GB/30min, 42% of 3.9GB RAM, no swap — OOM would kill dev server mid-fleet; (2) MED Next.js frontend serves zero security headers + X-Powered-By leak (backend has full headers); (3) MED middleware /admin gate is a stub — real enforcement only via admin-layout RSC check + backend 401/403; (4) MED FB_VERIFY_TOKEN default has no prod guard; /docs always exposed; (5) MED auth.py @_limiter.limit crashes whole app at import if slowapi missing again
+- Stack verdict: HEALTHY post-reset — all logged errors were transient (pre-bootstrap/venv reinstall); current processes error-free, real LLM live
+- Also: ~20 uncommitted modified files run in production-daemon; Next is 16.1.3 not 15; /tmp/backend.log stale residue
+---
+Task ID: R10
+Agent: R10 (github-research)
+Task: Testing/contract/observability research
+
+Work Log:
+- Read worklog (Tasks 18/19: Uptime-Kuma adopted, smoke-test-fixes.sh exists) + Z12 tests audit: 452 tests exist but ~10 fail, schema/scraper tiers ERROR, NO CI, no test ever automated
+- Verified ground truth: Schemathesis + Playwright 1.58 + pytest-playwright + structlog ALREADY in requirements.txt; Playwright Chromium already cached in ~/.cache/ms-playwright; but repos/zemest/.venv wiped (nothing installed); structlog declared but used by ZERO modules (all stdlib logging); frontend has NO test runner at all (no vitest/jest, zero *.test.ts)
+- Found the wiring gap: e2e suite targets :8000 legacy FastAPI-rendered dashboard, NOT the real product (Next :3000 → BFF proxy → :8000); BFF proxy (cookie→Bearer, path rewrite, fetchWithHeal) is the untested contract chokepoint; fetchWithHeal auto-heal can silently mask regressions
+- GitHub research (shared-IP API quota exhausted → HTML + commits.atom scrape, 17 repos, fields equivalent to /repos API): schemathesis 3.6k★ MIT (push 2026-08-30), playwright 95.4k★ Apache-2.0, vitest 17k★ MIT, structlog 4.9k★ dual MIT/Apache, openobserve 21.6k★ AGPL-3.0 single-binary; evaluated+skipped: pact-python 682★ (BFF is a transparent proxy — OpenAPI covers it, no broker in sandbox), otel py/js/contrib (no span viewer without Docker, 2-hop graph), sentry-python 2.2k★ (needs DSN server), sentry self-hosted 9.5k★ FSL (needs Docker), GlitchTip (main code MOVED to GitLab — GitHub repo is a 3★ stub; needs Docker+Postgres), siglens 1.8k★ (OpenObserve alternative, slower cadence)
+- Wrote full report → analysis/R10-testing-observability.md (ranked 5 + skip table + wiring-suite spec)
+
+Stage Summary:
+- TOP PICKS: (1) Schemathesis — OpenAPI contract fuzzing via from_asgi + validate_response: contract is FREE from FastAPI, dep already declared, tests/schema/ exists; catches 500s + response-shape drift (our top bug class) in-process, no server needed; (2) Playwright python — the ONLY full-stack layer (cookie→BFF→FastAPI→SQLite→LLM); retarget e2e to :3000, add heal-sentinel so fetchWithHeal can't mask failures; (3) structlog — JSON logs w/ request_id+tenant_id via ProcessorFormatter bridging all existing loggers, ~30 LOC, zero services
+- Minimal wiring regression suite (2–3 tools): Schemathesis + Playwright on existing pytest/httpx AsyncClient foundation + structlog for error visibility; 5 money tests: BFF-auth wiring, OpenAPI conformance sweep, static path-diff (zemest-api.ts vs app.openapi() paths), chat/LLM wiring (tokens_used>0), heal sentinel; ~5-min runbook in report
+- Key insight: the suite is 80% pre-specified in the repo (deps declared, fixtures written, browsers cached) — the work is REINSTALL+RETARGET+FIX-RED, not tool adoption; OpenObserve single-binary = Phase-2 log/trace store (no Docker), Sentry/GlitchTip deferred until a server can exist
+---
+Task ID: E8
+Agent: E8 (error-finder)
+Task: Database schema consistency audit
+Work Log:
+- Read worklog Tasks 18/19 first; opened zemest_local.db strictly read-only (mode=ro URI); never wrote to DB or code.
+- Inventory: 18 tables (matches all models in app/models registry — bootstrap_local.py imports the full registry, nothing missed); row counts snapshotted twice (DB is live: users 2→5, messages 0→6, token_usage 0→3 while auditing).
+- Verified Task-18/19 artifacts: WAL ✅ (persistent), hot indexes + UNIQUE partial fb_message_id ✅, messages.is_fallback ✅ (no "style tables" exist — style = tenants.style_profile JSON), admin_audit_log INTEGER rowid-alias PK ✅ (auto-assign verified empirically). All present ONLY because daemon restarted (00:49:32) after bootstrap — the 4 hot indexes + unique fb + token_usage index are lifespan-only, not model-declared, so bootstrap alone would NOT recreate them.
+- Rebuilt canonical schema via Base.metadata.create_all in /tmp and diffed: 17/18 tables match models exactly; token_usage is the sole divergent table (raw lifespan DDL: nullable UUID PK — NULL inserts legal, nullable token cols, TIMESTAMP default) because lifespan created it before bootstrap on the empty DB.
+- Alembic: NO alembic_version table in DB; single head a89fe0001 covers only 11/18 tables and lacks users.is_superadmin, messages.is_fallback, 6 tenant cols, 5 conversation cols; its fb_message_id index is non-unique despite docstring; alembic.ini targets Postgres → PG deploy via alembic breaks the app.
+- FK: 23 constraints declared, foreign_key_check clean, but PRAGMA foreign_keys never enabled anywhere (verified 0 on fresh aiosqlite connections) → unenforced at runtime. users.email has no UNIQUE while auth assumes uniqueness. 11 duplicate index pairs (model ix_* + lifespan idx_*) + 4 prefix-redundant.
+- backend.log: confirmed lifespan "Startup migration block failed — no such table: main.orders" (main.py:113, unguarded CREATE INDEX on possibly-missing table) on the 00:48:19 empty-DB boot, which skipped the unique index + admin tables that boot; worker no-such-table loop until bootstrap+restart; daemon_backend.py now pre-bootstraps but swallows bootstrap failures.
+- Full report → analysis/E8-database.md (10 findings F1–F10 with severities + suggested fixes, none implemented).
+
+Stage Summary:
+- DB HEALTHY NOW: 18/18 model tables, 17/18 byte-identical to create_all, WAL on, all Task-18/19 artifacts present, FK check clean, integrity_check ok, seed rows valid.
+- HIGH ×2: (1) alembic fully drifted from models/live DB (7 tables + key columns missing from head, no alembic_version — PG deploy breaks, drift untracked); (2) lifespan migration block aborts on fresh DB (unguarded CREATE INDEX, backend.log-proven) leaving hot/unique indexes + admin DDL skipped whenever uvicorn boots before bootstrap succeeds.
+- MEDIUM ×4: token_usage DDL ≠ model (nullable UUID PK); FKs declared but never enforced (foreign_keys=0 on all connections); users.email non-unique vs auth assumptions; 11 duplicate/redundant index pairs (write amplification).
+- LOW ×2 + INFO ×2: hot indexes not model-declared (fragile across recreations); lifespan pragmas one-shot on discarded NullPool connection (busy_timeout holds only via aiosqlite's default 5000ms; synchronous=NORMAL never sticks); audit-log PK lacks AUTOINCREMENT (rowid-reuse semantics only); live traffic mutates row counts.
+
+---
+Task ID: R5
+Agent: R5 (github-research)
+Task: Text classification / dialect ID library research
+
+Work Log:
+- Read worklog Task 18/19 context + app/ai/{chat_classifier,silent_trainer,language_engine,language}.py + requirements.txt (camel-tools/fasttext-wheel optional; trainer re-trains on new chats every 45s).
+- GitHub API: 16 search calls (core budget exhausted by parallel agents) + free raw.githubusercontent/PyPI/HF/readthedocs cross-checks for licenses, model sizes, versions.
+- Researched: fastText (+fasttext-wheel / fasttext-numpy2-wheel), scikit-learn, GlotLID, camel-tools DID, SetFit, ONNX Runtime/optimum/linguonnx, simpletransformers, spaCy textcat, lingua-py, langdetect forks (fast-langdetect, fasttext-langdetect), arabic-DID repos (swshon, QADI, AOC, ADI-20, Lafifi), zero-shot LLM.
+- LIVE BENCHMARK in the actual repo venv (1500 Egyptian commerce/junk msgs from real cc-2 lexicons): fastText train 0.73s / predict 0.002ms/msg / 19.5MB model (bucket=100k); sklearn SGD partial_fit 0.02s, predict 0.27ms, single-msg online update 0.81ms.
+- Found 2 live defects: installed fasttext-wheel 0.9.2 model.predict() crashes with numpy 2.1.3 (ValueError copy — needs fasttext-numpy2-wheel or low-level m.f.predict(text,k,thr,"strict")); quantize() segfaults in this pybind build; default bucket=2M yields 780MB models.
+- Wrote full report: analysis/R5-classification.md (top-5 ranked + also-rans table + integration sketches per app/ai file + phasing).
+
+Stage Summary:
+- Top picks: (1) fastText + fasttext-numpy2-wheel (MIT; 0.002ms/msg, 0.73s retrain in trainer cycle, char n-grams = Arabic+Arabizi native, MB-size models — upgrade chat_classifier to hybrid lexicon+learned cc-3); (2) scikit-learn HashingVectorizer+SGD partial_fit (BSD, already installed, TRUE per-message online learning 0.81ms); (3) GlotLID v3 (Apache-2.0+notice, 1.69GB / 425MB int8 ONNX; arz_Arab Egyptian F≈0.90 + arb_Latn Arabizi label — exact match for language_engine's designed layer-1); (4) camel-tools 1.6.0 DID (MIT, py≥3.11 OK, 262MB data pkg, CAI/ALX Egyptian — code path already written in language_engine.py, just install); (5) SetFit (Apache-2.0, few-shot cold-start only, torch cost). Skips: simpletransformers/spaCy textcat (no online training), lingua-py (800MB-3GB RAM), langdetect (weak short text, murky license), QADI/swshon (stale data/paper code), NLLB lid218e (CC-BY-NC — banned commercially).
+- Immediate action item: swap fasttext-wheel → fasttext-numpy2-wheel in requirements.txt (numpy-2 crash fix); wire sklearn learned stage into silent_trainer (zero new deps).
+
+---
+Task ID: E3
+Agent: E3 (error-finder)
+Task: End-to-end auth flow audit (backend :8000, BFF :3000, frontend pages, JWT)
+
+Work Log:
+- Read worklog Tasks 18/19 + auth code (app/api/auth.py, services/auth_service.py, utils/security.py, middleware/rate_limit.py, dependencies.py; src/app/api/auth/*, api/zemest/[...path] proxy, auth-cookies.ts, auth-page.tsx, register page, middleware.ts)
+- Backend direct: login happy/wrong-pw/unknown-email/malformed-JSON; register happy/dup/weak-pw/invalid-email; facebook fake-token/missing-field/rapid×6; /me with valid/no/garbage/tampered-signature/forged-default-secret/expired/alg-none tokens; decoded JWT payload (sub/exp/iat, 24h HS256); triggered real 429s (login 5/min, register 3/min) + header capture
+- BFF: same flows through /api/auth/* + /api/zemest/auth/* (cookie→Bearer), Set-Cookie attributes, logout, 429 passthrough + Retry-After forwarding, malformed-JSON parity, X-Forwarded-For rate-limit bypass experiment with controls (backend.log shows uvicorn ProxyHeaders rewriting client IP to spoofed XFF)
+- Frontend: GET /login /register /get-started (200, no error markers); traced form submit targets; FB button → /api/auth/facebook GET → 307 (client_id=demo_client_id) → missing callback route 404; middleware cookie-presence gate test with garbage cookie
+- Created 3 throwaway accounts (e3test+…@zemest.ai); demo account only received failed-login probes; backend/frontend never restarted; full report → analysis/E3-auth-e2e.md
+
+Stage Summary:
+- 35 PASS / 16 findings. Core JWT stack solid (HS256 pinned, exp required, persistent .jwt_secret — forged/default-secret/alg-none/tampered/expired tokens all 401; httpOnly cookie, no token in body/URL; BFF 401/400/422/429 parity good; rate limiter real with Retry-After direct)
+- TOP ISSUES: (1) HIGH /register page never calls the API — fake submit → /dashboard bounce (real signup only at /get-started); (2) HIGH rate-limit bypass via spoofed X-Forwarded-For through /api/zemest/* proxy (uvicorn trusts loopback XFF → limiter keys on attacker value → unlimited login/register brute force); (3) HIGH no server-side password policy (1-char password registers fine); (4) MED BFF 500 "Network error" on malformed JSON (backend 422); (5) MED no refresh token flow — "Remember me" 30d cookie outlives 24h token, silent logout; (6) MED browser FB OAuth dead end (demo_client_id, v18/21 mismatch, no state, callback 404) while backend token exchange is real; (7) user enumeration via register 400 + login timing oracle (6ms vs 510ms bcrypt); (8) facebook endpoint unrate-limited; logout client-side only (JWT valid ≤24h); BFF drops Retry-After on 429
+- Suggested fixes in report §5 — NOT implemented (error-finding only)
+---
+Task ID: R7
+Agent: R7 (github-research)
+Task: Realtime layer research for live chat (agent-reply streaming, typing indicators, new-message push) — RESEARCH ONLY
+
+Work Log:
+- Read worklog (Tasks 18/19 + 18-c/18-d) and grounded the current state: chat/page.tsx + conversations/page.tsx are 100% MOCK (setTimeout-simulated reply, mockConversations, zero fetch) — there is no polling to replace; realtime is greenfield wiring that must be designed with the data layer.
+- Verified sandbox topology live: uvicorn single process :8000, next dev :3000, NO Redis/Postgres/Docker (SQLite), Python 3.12 venv, Node 24, Bun 1.3.
+- Verified auth topology: Next BFF auth routes set httpOnly `zemest_auth` cookie; FastAPI auth is Authorization-Bearer only (app/dependencies.py), NO CORSMiddleware; api-client defaults to direct :8000 → SSE can ride the BFF cookie (streaming route) with zero CORS; WebSockets CANNOT be proxied by Next route handlers — key architectural asymmetry favoring SSE.
+- Key zero-cost discoveries: sse-starlette 3.3.4 ALREADY INSTALLED in the live venv (not pinned in requirements); websockets 16.0 present via uvicorn[standard]; @tanstack/react-query ^5.82.0 ALREADY in frontend package.json (unused).
+- GitHub API research (25 calls, search bucket after core /repos was rate-limited on shared IP): sse-starlette 849★ BSD-3 active; python-socketio 4.4k★ MIT active; socket.io 63.2k★ MIT active; TanStack/query 50.2k★ MIT active; vercel/swr 32.5k★; Azure/fetch-event-source 2.9k★ MIT; centrifugo 10.7k★ Apache-2 active + centrifuge-js 502★; supabase/realtime 7.6k★; partykit 5.7k★ slowing (post-CF-acquisition); soketi 5.6k★ STALE 2025-03 + AGPL; uWebSockets.js 9.1k★; react-use-websocket 1.9k★ last push 2025-02; permitio/fastapi_websocket_pubsub 594★. Disproved "litefury" as a realtime tool (GitHub hits are FPGA boards).
+- Wrote full ranked report with integration sketches (in-process asyncio bus, SSE route, publish hook points in test_chat/webhook, fetch-event-source hook with backoff→polling fallback, Next BFF streaming route) to /home/z/my-project/analysis/R7-realtime.md. No code changed, no git commands.
+
+Stage Summary:
+- PRIMARY: FastAPI SSE via sse-starlette (already installed — just pin 3.3.4) + Next BFF streaming route (same-origin cookie auth, no CORS needed) + Azure/fetch-event-source client + TanStack Query (already in package.json) invalidate-on-event; covers agent.delta streaming, agent.typing, message.new push with zero new daemons/Redis/packages-server-side.
+- FALLBACK: TanStack Query refetchInterval polling — same query cache, realtime-down just means invalidation signal stops; no separate fallback stack.
+- Upgrade paths: python-socketio (bidirectional), Centrifugo or redis.asyncio pub/sub behind the same bus interface (multi-worker day).
+- Rejects: supabase/realtime (needs Postgres+Elixir), partykit (CF-shaped), soketi (stale+AGPL), litefury (doesn't exist), Ably/Pusher (SaaS).
+- Sequencing: wire TanStack Query + real REST into conversations/chat pages FIRST (18-c: all mock), then add SSE as invalidation signal.
+
+---
+Task ID: R6
+Agent: R6 (github-research)
+Task: Calendar/scheduling tooling research
+
+Work Log:
+- Read worklog Task 18/19 + current code: backend app/api/calendar.py EXISTS (token ICS feed, registered in router.py) but the Task-18 FRONTEND calendar pieces (src/app/api/calendar/[token]/route.ts, zemest-api.ts, real scheduler page) are MISSING from the current zemest-platform checkout (sandbox reset — still the old mock scheduler page). Flagged in report.
+- GitHub API research (25 calls, shared-IP rate limits hit — cross-verified via shields.io badges, raw LICENSE files, PyPI/npm metadata): cal.com, apscheduler, icalendar, dateutil, ics.py, node-ical, ical.js, rrule.js, tsdav, python-caldav, Radicale, sabre/dav, fullcalendar, schedule-x, easyappointments, someday, open-web-calendar, nylas, croniter, zcal (not found), ical.tools (not OSS).
+- KEY FINDING verified twice (raw main-branch LICENSE + GitHub license detection): Cal.com is now MIT — the famous AGPL-3.0 is history (its coss design system is still AGPL). Still verdict: don't adopt the monolith; concepts/embed only.
+- Wrote full ranked report (top-5 cards, skip table w/ reasons, 2-way sync architecture, 3-phase roadmap mapping) to /home/z/my-project/analysis/R6-calendar.md. No code changes, no git commands.
+
+Stage Summary:
+- Top-5 picks: (1) agronholm/apscheduler 7.6k MIT active — replace the hand-rolled 30s asyncio loop; exact-time booking triggers+reminders (Phase-1 engine); (2) collective/icalendar 1.2k BSD (verified from LICENSE.rst) + python-dateutil — RFC-5545 correctness (75-octet folding + stable DTSTAMP are real gaps in our hand-rolled feed) + RRULE for recurring bookings; (3) googleapis/google-api-python-client 8.9k Apache — Google Calendar 2-way (syncToken+watch, OAuth pattern already proven in channels.py); (4) python-caldav 411 Apache — CalDAV 2-way for Apple/iCloud/Nextcloud (+ Radicale 4.9k GPL-3.0 as optional sidecar to make zemest itself a CalDAV source); (5) rbbydotdev/someday 1.1k MIT — embeddable availability picker for the merchant public booking page (spike; react-day-picker fallback).
+- Roadmap: Phase 1 native bookings (Booking/Availability models + APScheduler + no new UI deps) → Phase 2 export hardening (icalendar swap, re-land missing Task-18 frontend calendar card) → Phase 3 2-way sync (Google client + caldav client, UID/etag mapping, last-write-wins).
+- Skips: Cal.com (MIT now but 2nd-app monolith), Easy!Appointments (PHP+GPL), fullcalendar/schedule-x (have react-day-picker+dnd-kit), nylas (proprietary, OSS client archived), zcal (no maintained repo), ical.tools (hosted service), dormant ics.py/rrule.js.
+
+---
+Task ID: R3
+Agent: R3 (github-research)
+Task: Durable background job queue research for the invisible self-training pipeline + post scheduler (SQLite-only sandbox, Postgres in prod roadmap)
+
+Work Log:
+- Read worklog.md grounding: Task 18/18-d (ARQ + Tenacity recommended; "Redis already in stack"), 18-e (SSE chosen for zero-new-daemons), Z11 (celery topology: no queues/routes, dead max_retries, dispatch-before-commit races), 19 (inline_worker 30s + training_worker 45s loops proven E2E; scheduler stuck-publishing recovery)
+- Verified current runtime reality: no Redis/Postgres reachable in sandbox; celery[redis]+redis = dead weight in requirements.txt; silent_trainer already has app-level crash-resume (tenant.training_state checkpoints, CLASSIFY_BATCH_COMMIT=25 batch commits)
+- Probed GitHub API (repo metadata, releases, READMEs, key issues, storage source code, org repo listings, SQLite-queue ecosystem search) for: arq, celery, dramatiq, taskiq (+ full 21-repo org scan), apscheduler, huey, rq, procrastinate, plus litequeue/repid
+- Deep-read source: huey storage.py (SqliteStorage: WAL default, autocommit, short write txns; SqliteHuey/PostgresHuey class wrappers in api.py), apscheduler datastores (SQLAlchemy→SQLite), taskiq scheduler package, arq cron.py; pulled huey issue #445 (2019 sqlite locking, closed, WAL+timeout resolution) and arq issue #510 (maintenance-only mode, Oct 2025)
+- Confirmed NO viable Python SQLite-backed queue library exists (space is Node/Bun/Go: sidequest 1011★, bunqueue 544★, backlite 153★, liteque 78★ — all TS)
+- Wrote full ranked report with per-tool verdicts, integration sketches, comparison table, and explicit agree/disagree analysis vs 18-d's ARQ pick → analysis/R3-job-queues.md
+
+Stage Summary:
+- Top picks: (1) Huey 6,023★ MIT, pushed 2026-08-31, SqliteHuey = only serious SQLite-native durable queue (retries+backoff, crontab periodic tasks, results, zero deps, embeddable in-process consumer, drop-in PostgresHuey at migration — Redis never needed for jobs); (2) APScheduler 3.11.3 SQLite jobstore = best cron/interval triggers, in-process, but no job retries (schedule-only durability; v4 explicitly not production-safe); (3) Procrastinate 3.9.0 (PG-only, sandbox-blocked, but SKIP-LOCKED job rows + per-tenant locks make it the Postgres-day winner; note "looking for maintainers" bus-factor)
+- Key disagreement with 18-d: ARQ is now MAINTENANCE-ONLY (issue #510, Oct 2025) AND its "Redis already in stack" premise is false at sandbox runtime — recommend superseding the ARQ pick with Huey-now → Procrastinate-at-Postgres; 18-d's stale huey-sqlite skip reason (issue #445, 2019, closed) predates WAL defaults
+- Celery/RQ/Dramatiq/Taskiq rejected: all require Redis/RabbitMQ/etc, no SQLite story; Taskiq has NO sqlite broker in its entire 21-repo org
+- Tenacity (18-d #1) unaffected and complementary: queue retries = job-level, tenacity = call-level inside task bodies
+
+---
+Task ID: R2
+Agent: R2 (github-research)
+Task: Meta Graph API / WhatsApp / Instagram SDK research
+
+Work Log:
+- Read worklog.md (Task 18/19 context) + audited webhook.py, utils/security.py, services/{whatsapp,messenger}_service.py read-only
+- VERIFIED (contrary to briefing): X-Hub-Signature-256 validation implemented on all 3 channels, hmac.compare_digest + fail-closed on missing FB_APP_SECRET; outbound sends are real httpx Graph calls (text-only coverage), not stubs
+- Found 2 webhook nits (report-only): media_type="text_plain" typo in IG GET verify (L280); signature logic duplicated (security.py vs webhook.py)
+- 20 GitHub API calls (search + direct, hit rate limit at end): evaluated facebook-python-business-sdk, mobolic/facebook-sdk, heyoo, whatsapp-api-js, fbsamples/whatsapp-api-examples, wppconnect/wa-automate, instagrapi, unoapi, fbchat, smee-client, localtunnel, bore, x-hub-signature libs
+- Full report → /home/z/my-project/analysis/R2-meta-sdks.md (ranked top 5 + ToS-risk flags + signature best-practice audit + integration sketches)
+
+Stage Summary:
+- Top picks: (1) fbsamples/whatsapp-api-examples (official patterns, adopt-as-reference), (2) facebook/facebook-python-business-sdk (official, active, optional), (3) ekzhang/bore + localtunnel/smee (webhook tunnel for sandbox), (4) heyoo (MIT reference, semi-stale), (5) mobolic/facebook-sdk (skip)
+- Core verdict: no third-party SDK warranted for official Meta integration in Python — Meta archived its own WhatsApp SDK; keep raw httpx Graph layer, extend WhatsApp feature coverage (templates/media-id resolution/read receipts) from official samples, centralize hard-coded v21.0 Graph version
+- ToS flags: wa-automate/WPPConnect, instagrapi, unoapi-cloud, fbchat = unofficial/private-API → account-ban risk, never for production SaaS
+
+---
+Task ID: R1
+Agent: R1 (github-research)
+Task: OAuth/social-auth library research for Meta ecosystem (Facebook Login + IG/WA Business, both TS BFF and Python backend)
+Work Log:
+- Read worklog Tasks 18/19 + E3 audit; grounded code: BFF GET /api/auth/facebook is a dead end (demo_client_id, v18.0 dialog, no state, callback route 404) while backend POST token-exchange is real; channels.py /oauth-url has real page scopes but state="tenant:{id}" (guessable, unverified); no fb_exchange_token/long-lived code path anywhere; FB_APP_SECRET exists server-side only.
+- GitHub API research (14 calls, ≤20 budget; raw/npm/PyPI cross-checks free): arctic 1.7k MIT active; authlib 5.4k BSD-3 v1.8.0 released 2026-08-30; next-auth 28.4k ISC pushed 2026-07 but v5 still beta 5.0.0-beta.32 (v4 latest); facebook-python-business-sdk 1.6k Meta-maintained; pysnippet/fastapi-oauth2 91★; lucia 10.4k DEPRECATED 2025-03 (README); passport-facebook dead 2024-04; requests-oauthlib stale (last PyPI 2024-03, sync-only); social-core 919 active but Django-shaped. Note: lucialabs/arctic + lepture/authlib are non-canonical 404s (real repos: pilcrowonpaper/arctic, authlib/authlib).
+- Wrote full report with arctic+authlib split architecture (BFF start/callback routes with HMAC'd random state, backend /auth/facebook/exchange doing fb_exchange_token → /me/accounts permanent page tokens → webhook subscribe), token-refresh design for the existing ARQ worker, and 3-phase roadmap to /home/z/my-project/analysis/R1-oauth-auth-libraries.md. No code changed, no git commands.
+
+Stage Summary:
+- ADOPT NOW: (1) pilcrowonpaper/arctic (1.7k★ MIT, active) for the BFF browser leg — createAuthorizationURL(state, scopes)+validateAuthorizationCode, caller-owned CSRF state, zero-dep; caveat: hardcoded Graph v16 endpoints to bump to v21; (2) authlib (5.4k★ BSD-3, v1.8.0 2 days old) for the backend token lifecycle — AsyncOAuth2Client (httpx/async, matches stack) + fetch_token/update_token hooks; fb_exchange_token grant stays 10 hand-written lines because Meta issues no refresh tokens.
+- NEXT: facebook-python-business-sdk (Meta-maintained) once IG publishing/catalog/WhatsApp onboarding are built on stored page tokens.
+- SKIP: next-auth v5 (framework rewrite of a working audited JWT stack, user-login-shaped, 2yr beta), lucia (deprecated), passport-facebook (dead), requests-oauthlib (stale+sync), fastapi-oauth2/social-core (wrong shape; pattern reference only).
+- Key fact for implementation: page access tokens from a long-lived user token are PERMANENT; the 60-day user token re-extends via fb_exchange_token (ARQ job); no PKCE on Meta web flow → random HMAC'd single-use state is the CSRF defense; align dialog+token endpoints to v21.0.
+
+---
+Task ID: R4
+Agent: R4 (github-research)
+Task: Fine-tuning/serving tools with crash-resume research
+Work Log:
+- Read worklog Tasks 18/19 + ground-truthed app/ai/{silent_trainer,style_learner,chat_classifier}.py and tasks/training_worker.py (granular DB-commit checkpoints, maturity gating, 45s self-heal loop); hardware reality check: 2 vCPU / 3.9GB RAM / no GPU → serving OK, local training of >0.6B impossible
+- GitHub research, 12 API lookups + 9 raw doc fetches (no search API): transformers 164.7k★, ollama 179.9k★, llama.cpp 126.5k★, vllm 90.6k★, unsloth 75.4k★, LLaMA-Factory→hiyouga/LlamaFactory 74.5k★, peft 21.6k★, litgpt 13.6k★ (NOT archived), axolotl→axolotl-ai-cloud 12.4k★, torchtune→meta-pytorch 5.8k★ (BSD-3); all actively pushed within ~1 day
+- Doc-verified: llama-server supports multi-LoRA per-request routing (--lora comma-list, --lora-init-without-apply, per-request "lora":[{id,scale}], GET/POST /lora-adapters) on ONE shared base GGUF; ollama Modelfile ADAPTER directive is GONE → no per-tenant LoRA routing in ollama; unsloth does LoRA/QLoRA→GGUF export; LlamaFactory auto-resumes from output_dir checkpoints; axolotl resume_from_checkpoint: auto; torchtune checkpointer resume
+- Wrote full ranked top-5 + architecture to analysis/R4-llm-training.md
+Stage Summary:
+- Top picks: (1) peft+transformers Trainer = training engine (gold-standard resume_from_checkpoint, only CPU-viable path, Apache-2.0); (2) unsloth = GPU burst fast-path with direct GGUF adapter export; (3) llama.cpp llama-server = CPU serving backbone with verified per-tenant LoRA routing; (4) LlamaFactory = turnkey YAML alternative (auto-resume); (5) vLLM = multi-LoRA hot-swap serving when GPU arrives
+- Architecture: DB (SQLite/PG) as crash-resume LEDGER + filesystem for checkpoints/adapters (never weight blobs in SQLite); per-tenant rank-16 LoRA adapters (10-30MB) gated at ≥300 clean merchant replies; subprocess ft_runner composed with existing silent_trainer self-heal loop; phased: dataset export → CPU PEFT pilot → rented-GPU unsloth → vLLM
+---
+Task ID: R8
+Agent: R8 (github-research)
+Task: Data layer / vector store research (SQLite-first, Arabic search, Postgres-ready)
+
+Work Log:
+- Read worklog Tasks 18/19 + E8 audit; grounded code: app/database.py (async engine, PG pool branch already coded), app/knowledge/retriever.py (PageIndex LLM navigation, no vectors), requirements.txt (SQLAlchemy 2.0.36/alembic 1.14.1/aiosqlite 0.20.0/asyncpg 0.30.0); verified live DB read-only: 18 tables, WAL, no alembic_version, no FTS/vec tables, alembic head chain = 11 create_table (E8's 11/18 confirmed); confirmed prisma/ is dead scaffold (schema = demo template, lib/db.ts imported by nothing, @prisma/client ^6.11.1 pure weight)
+- GitHub research (6 search-API calls in batched repo: queries after core /repos hit 0/60 on shared IP; free releases.atom/raw cross-checks): sqlite-vec 8,062★ Apache-2.0 v0.1.9 (pre-v1 warning); pgvector 22,839★ v0.8.6; qdrant 34,299★ v1.19.0; chroma 29,192★ 1.5.9; lancedb 11,321★ v0.38.0; drizzle-orm 35,644★ v1.0.0-rc.4; prisma/prisma RENAMED → prisma/orm 47,581★ v8.0.0-rc; iterative/dvc RENAMED → treeverse/dvc 15,853★ 3.67.1; sqlalchemy 12,122★ 2.1.0rc1; alembic 4,358★ 1.19.1; sqlite-tokenizer-ar 1★ experimental; sqlite-lembed/rembed stale since 2024
+- Empirical verification in sandbox (isolated /tmp install, project venv untouched): sqlite-vec 0.1.9 loads via aiosqlite enable_load_extension, tenant-filtered KNN works, AND works through the backend's exact stack — SQLAlchemy 2.0.36 async engine + sync_engine connect event + await_() pattern (verified end-to-end); FTS5 unicode61+trigram present in SQLite 3.53.1; Arabic behavior measured: diacritics OK, hamza/ة/ى/article NOT unified, trigram gives substring search, 12-line normalizer fixes variants
+- Wrote full report (ranked 5 + also-rans + comparison table + SQLite→Postgres migration path + alembic drift-fix ordering) → analysis/R8-data-layer.md (replaced an interrupted earlier draft of same date; all claims re-verified). No code changed, no git commands.
+
+Stage Summary:
+- Top picks: (1) sqlite-vec — vector KNN + tenant-filtered search inside the existing SQLite file, VERIFIED under the exact SQLAlchemy-async stack, zero new services; (2) SQLite FTS5 + 12-line ar_norm() pre-normalizer + trigram fallback for Arabic keyword search (verified: only diacritics handled natively; hamza/ة/ى/clitics need normalizer); (3) pgvector for prod Postgres (same design, dialect-guarded alembic, asyncpg already pinned); (4) REMOVE dead Prisma scaffold (repo renamed prisma/orm, v8-rc; ours pins unused ^6.11.1) — pick drizzle-orm (v1.0.0-rc.4, SQLite+PG) if Next.js ever owns tables; (5) DVC (now treeverse/dvc) for trainer-dataset versioning when corpus grows
+- Architecture: one retrieve_hybrid() seam (FTS5 bm25 + vec0 KNN + RRF merge) kept dialect-agnostic; PageIndex tree stays as top-level router; alembic drift must be consolidated BEFORE adding vec0/fts5 revisions; FK-enforcement fix rides along with the connect-event pragma listener
+- Skips: qdrant/chroma/lancedb (separate stores — escape hatches only, lancedb first), sqlite-tokenizer-ar (1★, no license), sqlite-lembed/rembed (stale 2024)
+---
+Task ID: E2
+Agent: E2 (error-finder)
+Task: Next.js BFF route audit
+Work Log:
+- Read worklog (Tasks 18/19 + E3) — skipped re-auditing /api/auth/* internals; globbed src/app/api/**/route.ts → 9 route files (10 routes incl. /api root, proxy, calendar, demo×2, auth×4)
+- Read all route sources + src/lib/{backend-health,zemest-api,api-client}.ts; cross-checked every client-built path against backend openapi.json (all exist, auth flags as expected)
+- One demo login (rate-limit spaced) → cookie; ~55 live curl probes on :3000: no-auth 401s, tampered cookie 401, non-superadmin admin 403, Bearer passthrough + cookie-precedence, malformed JSON ×4 routes, empty-body POST (calendarApi.rotate pattern), trailing-slash/bogus-path/bad-UUID, full domain GET sweep (stats/products/orders/customers/conversations/crawl/insights/schedule/channels/calendar/style), calendar token matrix (format/oversize/traversal/rotation-invalidation), fake messenger token → real Meta 400 passthrough, 429 burst with spoofed XFF (31st hit), HEAD/OPTIONS matrix
+- Wrote full route table + findings to analysis/E2-bff-routes.md; no code touched, backend never stopped
+Stage Summary:
+- 9 route files, ~55 probes, 12 findings (1 HIGH shared w/ E3, 1 MED, 6 LOW, 4 INFO) + 12 positive confirmations
+- TOP: (1) HIGH X-Forwarded-For spoofing through /api/zemest/* keys ALL backend rate limits on attacker-controlled value (proved: 31-burst keyed on fake 203.0.113.99) — same root as E3 auth bypass, affects demo endpoints too; (2) MED fetchWithHeal re-POSTs non-idempotent requests after timeout (fresh 30s signal per attempt) → duplicate orders/posts/chats, BFF grinds ~61.5s after client's 30s abort; (3) LOW /api/demo/* drop Retry-After header on 429 (proxy forwards it correctly); welcome route masks outages with HTTP 200 fallback
+- KEY NEGATIVE RESULT: E3's malformed-JSON→500 bug does NOT generalize — all non-auth BFF routes pass bodies verbatim and return clean 422s; zero field-name drift found between zemest-api.ts and live backend payloads; calendar token rotation invalidation + ICS feed verified end-to-end
+---
+Task ID: E1
+Agent: E1 (error-finder)
+Task: Backend route inventory + live smoke audit
+
+Work Log:
+- Read worklog first (Tasks 0/18/19, 18-a…e, E3/E5/E8/E10, E2); deduped against Z4/Z5/Z11/18-b/18-e reports; did NOT re-report their findings
+- Enumerated every route: parsed app/api/router.py (17 routers) + all app/api/*.py + app/admin/{api,dashboard}.py + main.py, cross-checked against LIVE /openapi.json → 92 routes (GET 44, POST 34, PATCH 7, DELETE 6, PUT 1) + ~11 non-schema paths + 9 dead routes
+- Live-tested all 44 GETs with owner JWT (incl. real-id details, bogus-UUID 404s, no-token 401s) + 6 admin GETs with superadmin JWT + RBAC 403 negative; safe POSTs only: auth/login (owner+superadmin), demo/chat, demo/welcome, test/chat (real LLM 200/0.9s/1437 tokens), test/postiz-chat, webhook POSTs no-signature (403 fail-closed ×3), bogus-platform channel negatives (404); destructive verbs skipped & marked
+- Probes: / /docs /redoc /openapi.json /_admin/dashboard (401→200 w/ Bearer) /_admin/login /static / trailing-slash 307 / dead /dashboard 404; timing recorded for every call
+- 429 check: one controlled 11-burst on demo/welcome → 429 on 11th (limiter armed, in-memory); no auth 429s hit, logins spaced; only 4/92 routes rate-limited (register 3/min, login 5/min, demo 30+10/min)
+- Bot-detection verified live: 164 bot_detected lines, every curl logged as bot AND served — never blocks (no block path exists in code); "whatsapp"/"bot" substrings over-broad but log-only
+- Read app/middleware/bot_detection.py, dependencies.py (get_tenant = JWT+ownership), rate_limit.py, utils/egypt_address.py, api/{address,calendar,channels,demo_chat,test_chat,postiz,webhook}.py, admin/{api,dashboard}.py for auth/RL classification
+- Full report → analysis/E1-backend-routes.md (route tables w/ auth+RL+live status+times, 6 findings w/ severity + evidence + suggested fixes — none implemented, no code touched, daemon never restarted)
+Stage Summary:
+- Routes: 92 OpenAPI + ~11 non-schema + 9 DEAD (app/api/dashboard.py dashboard_router never registered → /dashboard* 404 live); 66 paths live-tested: 63 PASS / 3 FAIL (postiz GET posts/stats/best-time → 500 when sidecar down — Z5-known design, should be 503); 41 routes not live-tested (destructive/mutating, per policy)
+- NEW findings: (F1 HIGH) /api/address/{cities,areas,shipping,validate} case-sensitive governorate lookup — "Cairo" silently billed 60 EGP outside-rate instead of 35/free, cities+areas → [], validate false, and miss-path response drops governorate_ar/free_threshold/remaining keys (shape drift); normalize() helper exists but unused. (F2 MED) only 4/92 routes rate-limited — all LLM/crawl/import/expensive POSTs unthrottled (test/chat measured 0.9s/1437 tokens per call). (F3 LOW) list envelopes inconsistent (bare [] vs {items,total,page}). (F4 LOW) dead 9-route legacy dashboard module = unauthed-HTML trap if re-registered. (F5 LOW) test/postiz-chat returns 200 {reply:null} for non-postiz msgs (internal null sentinel leaks to API). (F6 INFO) bot-detection log-only confirmed, never blocks.
+- Backend route health otherwise: auth/RBAC/ownership enforced everywhere expected, all error shapes uniform {"detail":…}, webhooks fail-closed, ICS feed + calendar token flow work, admin RBAC 403 correct, response times healthy (4–19 ms; only LLM/bcrypt endpoints slow by design)
+
+---
+Task ID: E7
+Agent: E7 (error-finder)
+Task: TypeScript/lint/static health check
+Work Log:
+- Read worklog first (Tasks 0/E1–E10/R8/R9 context); static only — no code touched, nothing fixed
+- Ran `npx tsc --noEmit`: 8 unique errors (12 raw lines) — captured full file:line:code list
+- Ran `bun run lint` + direct `npx eslint .`: exit 0, zero warnings; audited eslint.config.mjs (~25 rules disabled, 11 dirs ignored)
+- `npm ls --depth=0`: no peer/invalid errors, 1 extraneous (immer@10.2.0); verified react@19.2.3 + next@16.1.3 + eslint-config-next@16.1.3 + @types/react@19.2.8 compat
+- Import-swept every dependency + all 47 shadcn ui/* components to confirm/deny dead-dep knowns (E9 TanStack, R8 Prisma, E2 api-client) and enumerate the rest
+- Root-caused both shipped TS errors via src/components/site/page-shell.tsx:84 PageSectionProps (no `id` prop) + traced anchor CTAs #roles/#programs → functional dead-button bug
+- Audited tsconfig (strict true but noImplicitAny:false; include pulls in repos/skills/examples = 160/309 files non-project) and grepped `: any` / `as any` / ts-ignore hotspots in src
+- Full report → analysis/E7-static-checks.md (9-finding register w/ severity + suggested fixes — none implemented)
+Stage Summary:
+- tsc: 8 errors — 2 SHIPPED (src/app/careers:125 + partnerships:58, TS2322, masked by next.config ignoreBuildErrors:true, anchor CTAs broken) / 0 config / 6 LEGACY (examples×2, skills×2, stale repos/zemest-platform×2); lint clean-but-neutered; deps: 0 peer conflicts, ~20 dead deps confirmed (incl. E9/R8/E2 knowns), immer extraneous; src any-count 6 (5 in dead api-client.ts); no typecheck script = only quality gate disabled
+---
+Task ID: E6
+Agent: E6 (error-finder)
+Task: Channel connection flows audit (FB/IG/WA real vs mock)
+Work Log:
+- Read worklog first (Tasks 18/19, R1/R2/E5 context honored — skipped sig verification, send paths, R2 nits, E5 chip fields); read channels.py, facebook.py, webhook.py connect paths, tenants schema/model, config, frontend channels page, BFF proxy + auth/facebook route + zemest-api.ts channelsApi; confirmed src/app/api/channels/** does NOT exist (universal /api/zemest proxy carries channel traffic)
+- Traced all 3 connect flows: every connect calls _graph_get (real Graph GET) BEFORE storing; grep-proved NO OAuth code-exchange anywhere (no fb_exchange_token/oauth access_token endpoint), oauth-url = dead code (frontend never calls it), BFF login FB button = 307 → v18.0 dialog with client_id=demo_client_id + NO state, callback routes 404 (both /api/auth/facebook/callback and /api/zemest/facebook/oauth/callback)
+- Live tests (daemon untouched, DB unmodified): JWT login → channel status (honest not-connected); fake-token connects ×3 → real Meta 400 "OAuthException 190: Malformed access token" + httpx attempts in backend.log; same via BFF cookie chain; webhook-URL routing matrix (displayed URL 404s on :3000 origin, /api/zemest/webhook/* echoes challenge); /api/facebook/pages + /connect probes; error paths (test-while-unconnected 400s, idempotent disconnect, unknown platform 404, oauth-url ready:false)
+- Token audit: TenantResponse whitelist excludes tokens (good); channel responses token-free (good); BUT httpx INFO logs full access_token in query string on every Graph call (live-proven in backend.log) and /api/facebook/{pages,connect} take tokens as QUERY params → uvicorn access log; get_user_pages returns per-page access_token unmasked + swallows Meta errors → 200 {"pages":[]}
+- Discovered owner_psid is never writable anywhere (TenantUpdate lacks it, webhook never captures it) → Messenger/IG test-message button always 400s with misleading "set it in Settings" guidance, and owner-chat bypass routing unreachable; also IG/WA connect never subscribes webhooks (subscribe_instagram_to_webhook = 0 call sites), disconnect leaves page subscribed at Meta
+- Wrote full report → analysis/E6-channels.md (flow traces + live evidence table + 11 findings w/ severity — none implemented, no code touched, no git commands)
+Stage Summary:
+- VERDICTS: Messenger/Instagram/WhatsApp connect = REAL live Graph validation before store (fake token → real Meta 400, nothing persisted); Facebook browser OAuth = BROKEN dead end (no callback route, no code exchange, demo_client_id, no state, guessable tenant:{id} state on the dead oauth-url); channel status = REAL re-validation; disconnect = REAL (DB-only); NO canned "connected" 200 in channels.py — but PATCH/POST /tenants accepts page_access_token unvalidated (bypass)
+- TOP findings: (F1 HIGH) webhook callback URLs shown in the channels UI 404 on the public Next origin — Meta setup following the UI always fails (working path is /api/zemest/webhook/*); (F2 HIGH) access tokens persisted in plaintext in backend.log (httpx URL logging) + uvicorn access log (query-param APIs); (F3 HIGH) OAuth dead end; (F4 MED) owner_psid never settable → test-message + owner routing broken; (F5 MED) tenant PATCH token bypass; (F6 MED) IG/WA webhook subscribe never called; (F7 MED) user-token accepted as page token with explicit page_id; F8-F10 LOW-MED (unmasked page tokens, disconnect residue, guessable state/client-controlled redirect_uri)
+---
+Task ID: E4
+Agent: E4 (error-finder)
+Task: Frontend→backend wiring trace + mismatch audit
+
+Work Log:
+- Read worklog first (Tasks 18/19, E1/E2/E3/E5/E10 context honored — none re-reported); worked only on the live dev tree /home/z/my-project/src (not repos/zemest-platform)
+- Exhaustive grep of fetch(/fetchWithHeal(/axios/XHR/EventSource/WebSocket/React-Query across src/** → 17 fetch call sites, 46 unique call templates; read the full data layer (zemest-api.ts, backend-health.ts, api-client.ts, auth-cookies.ts) + all 9 BFF route files + middleware
+- Read all 17 backend API router modules + schemas/*.py + admin/api.py + tenant_service stats; cross-checked every client-built path against live /openapi.json (79 paths / 92 method-routes, matches E1)
+- Built the complete call-chain map (frontend file → helper → BFF path → backend route → auth forwarding) + the reverse orphan map
+- Live verification (~60 curls, backend never touched/restarted): owner+superadmin login via BFF, 14/14 dashboard GET sweep 200, 5/5 admin GETs 200, RBAC negatives (owner→admin 403, no-cookie 401), safe negative mutation probes (bogus IDs → 404, past date → 422, SSRF URL → 400), all 21 GET response shapes vs TS interfaces, login body key check (no refresh_token), demo widget via BFF, orphan existence probes (style-profile/best-time/oauth-url/postiz/postiz-chat/generate-caption/facebook-pages)
+- Wrote full report → analysis/E4-wiring-map.md (complete mapping tables + findings; no code changed)
+
+Stage Summary:
+- 45/45 frontend-called backend routes exist and answer 200 — ZERO path mismatches, ZERO field-name drift (request bodies vs Pydantic + response shapes vs TS interfaces, fully verified), auth token forwarding (cookie→Bearer) correct on every call
+- Reverse map: 41 backend routes (45% of surface) have NO frontend caller (+6 webhook-by-design): 12 postiz, 5 address, 5 order-extras, 5 product-detail, 3 facebook-legacy, 3 style, 2 insights, generate-caption, customers PATCH, crawl-job detail, channels oauth-url, test/postiz-chat
+- New findings: (F1 MED) src/lib/api-client.ts is a dead duplicate client calling :8000 directly with same export names as zemest-api — import-away footgun, delete it; (F2 MED) entire Egypt-address + manual-order flows backend-only with dead lib exports (addressApi, ordersApi.create) — merchants can't create/edit orders by hand; (F3 MED) the real channels/oauth-url v21 OAuth builder is unwired while the only OAuth UI path is E3's dead /api/auth/facebook redirect; (F4 LOW) orphan triage list incl. finished-but-unwired AI features (generate-caption, best-time, style-profile); (F5 INFO) refresh_token cookie branch in 3 BFF auth routes is dead code (backend never returns one — confirms E3's no-refresh-flow); (F6 INFO) GET /api static hello-world placeholder
+- Totals: 45 calls audited · 45 matched / 0 mismatched · 41 orphaned backend routes · 0 CRITICAL, 0 HIGH, 3 MEDIUM, 1 LOW, 2 INFO — none implemented (error-finding only)
+---
+Task ID: E9
+Agent: E9 (error-finder)
+Task: Chat pipeline end-to-end live audit (backend API)
+
+Work Log:
+- Read worklog (Tasks 18/19, E1/E5/E8/E10 context honored — mock chat frontend NOT re-reported); read test_chat.py, agent.py, llm_client.py, chat_classifier.py, silent_trainer.py, retriever, prompts, conversations.py, models
+- Login (no 429) → sent 3 required test chats (Arabic product Q, delivery Q, spam) + failure-mode battery: empty/whitespace/missing/null/10KB/emoji-only/2-parallel + bad-UUID; all with timings, DB verified read-only (mode=ro), backend.log traced (lines 1946→2185)
+- Proved current-message duplication in LLM context via DB-copy autoflush experiment + token arithmetic (10KB call prompt 10730 vs next call 6051, delta ≈ one full copy); proved empty products grounding by rebuilding the live system prompt on a DB copy (## المنتجات section empty)
+- Watched silent trainer epochs 4–8 fire ≤45s after each message batch; verified is_fallback + empty-content filters exclude exactly the 3 fallback apologies (merchant 11 / customer 11)
+- Wrote full report → analysis/E9-chat-pipeline.md (15 findings, none implemented)
+
+Stage Summary:
+- REAL LLM verified: 3/3 required messages answered by glm-4-plus in Egyptian Arabic (0.9–1.2 s), token_usage rows per call, all persisted is_fallback=0; trainer fired correctly with is_fallback filter working
+- Top issues: bad tenant_id → 500 unhandled ValueError; empty/whitespace message → guaranteed English fallback apology persisted; NO product grounding (knowledge_bases empty, no products-table fallback) → agent invents prices (750 vs real 1850) AND trainer bakes the hallucination into few-shot exemplars (self-reinforcing); current message duplicated in every LLM prompt (autoflush); tokens_used misattributed (stale on fallback); test/playground traffic trains the style profile; concurrent messages cross-wire exemplar pairs

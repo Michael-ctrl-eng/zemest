@@ -38,14 +38,24 @@ export function ensureBackend(): Promise<boolean> {
   if (!healing) {
     healing = (async () => {
       if (await ping()) return true;
-      try {
-        // daemon_backend.py start — double-forks and returns immediately
-        await execFileAsync(`${REPO}/.venv/bin/python3`, [`${REPO}/daemon_backend.py`, "start"], {
-          cwd: REPO,
-          timeout: 15_000,
-        });
-      } catch {
-        // fall through to the polling loop — it may already be booting
+      // Try every python that can run the daemon — the repo venv can be wiped
+      // by sandbox resets while /home/z/.venv (or system python) survives.
+      const pyCandidates = [
+        `${REPO}/.venv/bin/python3`,
+        "/home/z/.venv/bin/python3",
+        "python3",
+      ];
+      for (const py of pyCandidates) {
+        try {
+          // daemon_backend.py start — double-forks and returns immediately
+          await execFileAsync(py, [`${REPO}/daemon_backend.py`, "start"], {
+            cwd: REPO,
+            timeout: 15_000,
+          });
+          break;
+        } catch {
+          // try the next interpreter
+        }
       }
       const deadline = Date.now() + BOOT_TIMEOUT_MS;
       while (Date.now() < deadline) {

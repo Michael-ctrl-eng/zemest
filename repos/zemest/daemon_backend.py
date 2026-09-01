@@ -5,6 +5,7 @@ Usage:
 """
 import os
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -62,11 +63,41 @@ def alive(pid):
         return False
 
 
+def _db_needs_bootstrap() -> bool:
+    """True when the local SQLite DB is missing or lacks the users table."""
+    import sqlite3
+    db_path = os.path.join(REPO, "zemest_local.db")
+    if not os.path.exists(db_path):
+        return True
+    try:
+        con = sqlite3.connect(db_path)
+        row = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        con.close()
+        return row is None
+    except Exception:
+        return True
+
+
 def start():
     pid = read_pid()
     if pid and alive(pid):
         print(f"already running (pid {pid})")
         return
+    # Auto-bootstrap: sandbox resets can wipe the SQLite file. If the schema
+    # is gone, recreate tables + demo accounts BEFORE booting uvicorn so the
+    # platform never comes up 500ing on every endpoint.
+    if _db_needs_bootstrap():
+        print("db missing/empty — running bootstrap_local.py ...")
+        try:
+            subprocess.run(
+                [sys.executable, "bootstrap_local.py"],
+                cwd=REPO, env=ENV, capture_output=True, timeout=180,
+            )
+            print("bootstrap done")
+        except Exception as e:
+            print(f"bootstrap failed (continuing): {e}")
     pid = os.fork()
     if pid == 0:
         os.setsid()
@@ -78,8 +109,12 @@ def start():
                 os.dup2(f.fileno(), 2)
             devnull = os.open(os.devnull, os.O_RDONLY)
             os.dup2(devnull, 0)
-            os.execve(f"{REPO}/.venv/bin/uvicorn",
-                      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"], ENV)
+            # Prefer repo venv; fall back to any uvicorn on PATH (survives venv wipes)
+            uv = os.path.join(REPO, ".venv", "bin", "uvicorn")
+            if not os.path.exists(uv):
+                uv = shutil.which("uvicorn") or "/home/z/.venv/bin/uvicorn"
+            os.execve(uv,
+                      [uv, "app.main:app", "--host", "0.0.0.0", "--port", "8000"], ENV)
         os._exit(0)
     os.waitpid(pid, 0)
     # find the daemon pid
