@@ -1503,3 +1503,21 @@ Stage Summary:
 - English copy now consistent: one terminology (agent), one product story (commerce moderation for Egyptian stores), zero template leftovers, zero dead marketing links, zero placeholder pages
 - 16 files edited + 3 new files (lib/blog-posts.ts, blog/[slug]/page.tsx) — text and content only, zero design/class changes beyond reused components
 - Push pending: PAT not persisted in sandbox (used inline last session, correctly not stored) — commit ready, needs user to supply PAT for the final push
+
+---
+Task ID: 23
+Agent: main-orchestrator
+Task: Delete all agent-taken screenshots; push Task 22 + cleanup to GitHub with user-provided PAT
+
+Work Log:
+- Audited every image artifact in the repo against actual code references (git grep across tsx/ts/js/html/css)
+- Deleted 17 tracked screenshot files: repos/zemest-platform/tavus-real-section-0..8.png (browser captures of tavus.com taken during design-reference work) + public/tavus-screenshot-1..4.avif and repos/zemest-platform/public/tavus-screenshot-1..4.avif (Tavus product-UI screenshots from the clone template) — all zero code references
+- Kept: zemest-* identity assets (referenced by site), identity-raw/ source images (asset regeneration sources), scripts/assets charts (report figures), tavus art/hand/shadow avifs (referenced design assets)
+- Verified .agent-browser/ and tavus-ref/ local dirs already absent; tool-results/ untracked
+- Committed deletion as de3355b on top of 49c5a82 (Task 22 copy polish)
+- Pushed main (49c5a82 + de3355b) to github.com/Michael-ctrl-eng/zemest using PAT passed inline in the push URL only — never written to .git/config, git-tracked files, or scripts
+- Verified push: origin/main == HEAD
+
+Stage Summary:
+- Repo now screenshot-free; 2 new commits live on remote
+- PAT exposed in chat again — user must rotate it (GitHub Settings → Developer settings → Tokens)
