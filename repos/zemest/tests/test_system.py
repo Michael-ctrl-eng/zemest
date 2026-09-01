@@ -124,16 +124,20 @@ class TestSystemFlow:
 
     async def test_multi_tenant_isolation(self, client, db_session):
         """Test that data is properly isolated between tenants."""
-        # Create two users
+        # Create two users (unique emails: earlier suite files may leave
+        # a@test.com registered in the shared test.db)
+        suffix = uuid.uuid4().hex[:8]
         resp1 = await client.post("/api/auth/register", json={
-            "name": "User A", "email": "a@test.com", "password": "pass",
+            "name": "User A", "email": f"a-{suffix}@test.com", "password": "pass",
         })
+        assert resp1.status_code == 200, resp1.text
         token_a = resp1.json()["access_token"]
         headers_a = {"Authorization": f"Bearer {token_a}", "Content-Type": "application/json"}
 
         resp2 = await client.post("/api/auth/register", json={
-            "name": "User B", "email": "b@test.com", "password": "pass",
+            "name": "User B", "email": f"b-{suffix}@test.com", "password": "pass",
         })
+        assert resp2.status_code == 200, resp2.text
         token_b = resp2.json()["access_token"]
         headers_b = {"Authorization": f"Bearer {token_b}", "Content-Type": "application/json"}
 
@@ -193,30 +197,26 @@ class TestSystemFlow:
         )
         assert resp.status_code == 200
 
-    async def test_dashboard_pages_load(self, client):
-        """Test that all dashboard pages return 200."""
-        pages = [
-            "/dashboard/login",
-            "/dashboard",
-        ]
-        for page in pages:
+    async def test_legacy_dashboard_routes_are_gone(self, client):
+        """The legacy unauthenticated Jinja dashboard was removed — those
+        routes must 404 (the live dashboard is the Next.js app, which talks
+        to the authenticated JSON APIs only)."""
+        for page in ("/dashboard/login", "/dashboard"):
             resp = await client.get(page)
-            assert resp.status_code == 200, f"Page {page} failed"
+            assert resp.status_code == 404, f"Legacy route {page} unexpectedly live"
 
-    async def test_dashboard_tenant_pages_load(self, client, test_tenant):
-        """Test that tenant-specific dashboard pages return 200."""
+    async def test_tenant_api_pages_load(self, client, auth_headers, test_tenant):
+        """The authenticated JSON API surface the Next.js dashboard uses."""
         tid = test_tenant.id
         pages = [
-            f"/dashboard/{tid}/chat",
-            f"/dashboard/{tid}/products",
-            f"/dashboard/{tid}/orders",
-            f"/dashboard/{tid}/conversations",
-            f"/dashboard/{tid}/crawl",
-            f"/dashboard/{tid}/settings",
+            f"/api/tenants/{tid}/products",
+            f"/api/tenants/{tid}/orders",
+            f"/api/tenants/{tid}/conversations",
+            f"/api/tenants/{tid}/customers",
         ]
         for page in pages:
-            resp = await client.get(page)
-            assert resp.status_code == 200, f"Page {page} failed"
+            resp = await client.get(page, headers=auth_headers)
+            assert resp.status_code == 200, f"Endpoint {page} failed"
 
     async def test_swagger_docs_load(self, client):
         """Test that API docs are accessible."""

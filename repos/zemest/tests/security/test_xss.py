@@ -68,25 +68,21 @@ class TestXSSInProducts:
 
         product_id = resp.json()["id"]
 
-        # 2. Fetch the products dashboard page (HTML)
+        # 2. Verify via the JSON API (the legacy unauthenticated HTML
+        #    dashboard was removed; the React dashboard auto-escapes by
+        #    construction — the backend must never render user data as HTML)
         resp = await client.get(
-            f"/dashboard/{test_tenant.id}/products",
+            f"/api/tenants/{test_tenant.id}/products",
             headers=auth_headers,
         )
         assert resp.status_code == 200
-        html = resp.text
-
-        # 3. The raw payload should NOT appear unescaped in the HTML.
-        # Jinja2 escapes <script> → &lt;script&gt;, so we should see the
-        # escaped form, not the raw tag.
-        assert "<script>alert" not in html, (
-            f"Raw <script> tag leaked into dashboard HTML! Payload: {payload!r}"
+        assert "application/json" in resp.headers.get("content-type", ""), (
+            "products surface must be JSON, never server-rendered HTML"
         )
-        assert "onerror=alert" not in html, (
-            f"Raw onerror handler leaked into HTML! Payload: {payload!r}"
-        )
+        # JSON strings are inert data: a payload may round-trip as a string,
+        # but there is no HTML context on this path for it to execute in.
 
-        # 4. Clean up so parametrized runs don't conflict on duplicate name
+        # 3. Clean up so parametrized runs don't conflict on duplicate name
         await client.delete(
             f"/api/tenants/{test_tenant.id}/products/{product_id}",
             headers=auth_headers,
@@ -120,14 +116,15 @@ class TestXSSInOrders:
         assert resp.status_code in (201, 422)
 
         if resp.status_code == 201:
-            # Fetch orders dashboard HTML
+            # Verify via the JSON API — no server-side HTML rendering path
             resp = await client.get(
-                f"/dashboard/{test_tenant.id}/orders",
+                f"/api/tenants/{test_tenant.id}/orders",
                 headers=auth_headers,
             )
             assert resp.status_code == 200
-            html = resp.text
-            assert "<script>alert" not in html, "XSS payload leaked in orders HTML"
+            assert "application/json" in resp.headers.get("content-type", ""), (
+                "orders surface must be JSON, never server-rendered HTML"
+            )
 
     async def test_xss_in_address_detail(
         self, client, auth_headers, test_tenant
@@ -158,13 +155,9 @@ class TestXSSInOrders:
                 headers=auth_headers,
             )
             assert resp.status_code == 200
-            # The payload may be in JSON response (that's fine — JSON is safe),
-            # but the dashboard HTML must escape it.
-            resp = await client.get(
-                f"/dashboard/{test_tenant.id}/orders",
-                headers=auth_headers,
+            assert "application/json" in resp.headers.get("content-type", ""), (
+                "order detail must be JSON — the payload is inert data there"
             )
-            assert "<img src=x onerror" not in resp.text
 
 
 @pytest.mark.asyncio
@@ -183,15 +176,15 @@ class TestXSSInTenantSettings:
         )
         assert resp.status_code == 200
 
-        # Fetch any dashboard page — page_name appears in nav
+        # Verify via the tenant JSON API — page_name is inert data there;
+        # the React dashboard renders it with auto-escaping
         resp = await client.get(
-            f"/dashboard/{test_tenant.id}/products",
+            f"/api/tenants/{test_tenant.id}",
             headers=auth_headers,
         )
         assert resp.status_code == 200
-        html = resp.text
-        assert "<script>alert('xss')</script>" not in html, (
-            "XSS payload leaked via tenant page_name!"
+        assert "application/json" in resp.headers.get("content-type", ""), (
+            "tenant surface must be JSON, never server-rendered HTML"
         )
         # Restore original name
         await client.patch(
@@ -226,14 +219,13 @@ class TestXSSInChat:
             )
         assert resp.status_code == 200
 
-        # Fetch conversations dashboard — XSS payload may appear
+        # Verify via the conversations JSON API — no HTML rendering path
         resp = await client.get(
-            f"/dashboard/{test_tenant.id}/conversations",
+            f"/api/tenants/{test_tenant.id}/conversations",
             headers=auth_headers,
         )
         assert resp.status_code == 200
-        html = resp.text
-        assert "<script>alert('xss')</script>" not in html
+        assert "application/json" in resp.headers.get("content-type", "")
 
 
 @pytest.mark.asyncio
@@ -246,7 +238,7 @@ class TestXSSContentSecurityPolicy:
         This is a best-practice test — if headers aren't set yet, the test
         is marked xfail to document the gap.
         """
-        resp = await client.get("/dashboard/login")
+        resp = await client.get("/docs")
         # We check for at least one of: X-Content-Type-Options, X-Frame-Options,
         # Content-Security-Policy, Strict-Transport-Security
         headers_lower = {k.lower(): v for k, v in resp.headers.items()}

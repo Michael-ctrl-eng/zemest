@@ -1,5 +1,12 @@
 import asyncio
+import os
 import uuid
+
+# MUST happen before any app import: the slowapi limiter is a process-wide
+# singleton — its in-memory counters accumulate across the whole suite and
+# would 429 late-running tests (auth limits are 3-5/minute).
+os.environ.setdefault("RATELIMIT_ENABLED", "false")
+
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
@@ -13,6 +20,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config import Settings
 from app.database import Base, get_db
 from app.main import app
+
+# When rate limiting is disabled for tests, ALSO strip the limits the
+# route decorators registered — slowapi 0.1.10's `enabled=False` flag does
+# not reliably gate every evaluation path (verified empirically), so we
+# empty the registries the checks read from. Belt AND suspenders.
+if os.environ.get("RATELIMIT_ENABLED", "").lower() == "false":
+    try:
+        from app.middleware.rate_limit import get_limiter as _test_limiter
+
+        _lim = _test_limiter()
+        _lim._route_limits.clear()
+        _lim._dynamic_route_limits.clear()
+    except Exception as _rl_err:  # pragma: no cover
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "Could not strip rate limits for tests: %s", _rl_err
+        )
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.product import Product

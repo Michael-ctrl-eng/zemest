@@ -170,7 +170,10 @@ class TestSSRFAllowlist:
 
     def test_ssrf_allows_public_with_query(self):
         """URLs with query strings should be allowed."""
-        safe, _ = is_safe_url("https://api.example.com/v1/products?page=1&limit=10")
+        # NOTE: use a hostname that actually resolves (example.com has real
+        # A records; api.example.com is NXDOMAIN — the resolver's failure
+        # would trip the DNS-safety branch, not the query-string branch).
+        safe, _ = is_safe_url("https://example.com/v1/products?page=1&limit=10")
         assert safe
 
 

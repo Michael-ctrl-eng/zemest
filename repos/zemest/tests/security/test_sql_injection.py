@@ -120,9 +120,8 @@ class TestSQLInjection:
         )
         assert resp.status_code in (200, 422)
 
-        # Verify the products table still exists
-        inspector = inspect(db_session.bind)
-        # For async, we check by attempting a SELECT
+        # Verify the products table still exists (async engines don't
+        # support inspect() — the SELECT itself is the existence check)
         result = await db_session.execute(text("SELECT COUNT(*) FROM products"))
         count = result.scalar()
         assert count is not None, "products table was dropped by injection!"
