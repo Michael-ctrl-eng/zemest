@@ -1,0 +1,14 @@
+# /etc/systemd/system/zemest-api.socket (OPTIONAL)
+# Hides the 1–3 s restart blip on the API port via socket activation:
+# connections queue in the socket while the service restarts; Caddy's
+# upstream retries cover the rest.
+[Socket]
+ListenStream=127.0.0.1:8000
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target
+# The service unit then uses:
+#   ExecStart=... uvicorn app.main:app --fd 3
+# (drop --host/--port). Enable both:
+#   systemctl enable --now zemest-api.socket zemest-api.service

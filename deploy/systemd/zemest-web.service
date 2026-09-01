@@ -1,0 +1,29 @@
+# /etc/systemd/system/zemest-web.service
+[Unit]
+Description=Zemest Next.js standalone (pages + BFF)
+After=network-online.target zemest-api.service
+Wants=zemest-api.service
+
+[Service]
+Type=exec
+User=zemest
+Group=zemest
+WorkingDirectory=/opt/zemest/web            # server.js + .next/static + public
+EnvironmentFile=/etc/zemest/web.env         # BACKEND_URL=http://127.0.0.1:8000
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+Environment=NODE_OPTIONS=--max-old-space-size=512
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=2
+MemoryHigh=512M
+MemoryMax=768M                              # E10 F1: dev hit 1.74GB; prod standalone is far leaner — cap anyway
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/zemest/web/.next/cache
+
+[Install]
+WantedBy=multi-user.target

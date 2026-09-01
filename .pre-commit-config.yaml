@@ -1,0 +1,20 @@
+# Local glue layer (G3 §5.4) — kills the PAT-class leak at commit time,
+# BEFORE any push. Install once: pip install pre-commit && pre-commit install
+# First sweep: pre-commit run --all-files
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0 # pin to the latest release tag at install time
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: ["-ll", "-r", "repos/zemest/app"]
+  - repo: local
+    hooks:
+      - id: pip-audit
+        name: pip-audit (backend deps)
+        entry: uvx pip-audit -r repos/zemest/requirements.txt
+        language: system
+        pass_filenames: false

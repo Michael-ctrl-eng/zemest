@@ -1521,3 +1521,53 @@ Work Log:
 Stage Summary:
 - Repo now screenshot-free; 2 new commits live on remote
 - PAT exposed in chat again — user must rotate it (GitHub Settings → Developer settings → Tokens)
+
+---
+Task ID: 24-F
+Agent: frontend-wiring subagent
+Task: Wire the 3 mock dashboard pages (chat / conversations / style) to real backend endpoints via TanStack Query (data wiring only, zero design changes) + enable React Compiler
+
+Work Log:
+- Read worklog + E5/R9/R7 analyses: per E5, chat & conversations pages were already endpoint-wired (Task 18, hand-rolled client) and style was a pure mock stub hiding a working backend feature; R9 confirmed @tanstack/react-query 5.90.19 installed-but-unused, React Compiler key verified top-level in next 16.1.3
+- NEW src/components/dashboard-query-provider.tsx ("use client"): QueryClientProvider (staleTime 30s, gcTime 5min, refetchOnWindowFocus, retry 1) mounted in src/app/dashboard/[tenantId]/layout.tsx around {children} — one-line layout change, covers all tenant pages
+- NEW src/hooks/use-dashboard-data.ts: typed hooks — useConversations ["conversations",tenantId] (10s poll), useConversation ["conversations",tenantId,conversationId] (10s poll, 5s in chat; disabled when no id; polling pauses while window hidden), useSendChatMessage (POST /test/chat, invalidates ["conversations",tenantId] on success), useStyleProfile ["style-profile",tenantId], useRebuildStyle (POST /rebuild-style, invalidates same key)
+- src/lib/zemest-api.ts: added styleApi (GET /tenants/{id}/style-profile, POST /tenants/{id}/rebuild-style) + StyleProfile/StyleProfileResponse types (live-verified shape incl. silent-training enrichment: stage, maturity, buyer_persona, exemplars)
+- Chat page: send converted to useSendChatMessage mutation (transcript/telemetry state kept identical); transcript now syncs from the polled real conversation thread once a conversation_id exists (server transcript authoritative; optimistic local messages never dropped); markup untouched
+- Conversations page: list + modal thread converted to polled queries; loading/error/empty states bound to query state (ErrorState/LoadingState as before, error only shown when no data so background poll failures don't blank the table); refresh button = manual refetch with spinner; markup untouched
+- Style page: pure mock stub replaced with real GET /tenants/{id}/style-profile wiring — LoadingState/ErrorState (products-page pattern), learned profile table (tone/formality/length/emoji/language mix/dialects/messages analyzed/training stage), greeting/signoff/vocab chips + sample-reply exemplars, "Rebuild profile" mutation button in header; all markup composed strictly from existing dash-kit components/classes; not_built keeps the EmptyState card with honest copy
+- React Compiler: next.config.ts reactCompiler: true (top-level key); first build failed resolving babel-plugin-react-compiler → installed babel-plugin-react-compiler@1.0.0 as devDependency (bun add -d) → one intermediate build was OOM-killed (sandbox has 4GB total and the running dev server's compile workers held ~1.9GB); clean retry passed — verified compiler artifacts (memo-cache slots P[n]!==dep checks) in the built dashboard chunks
+- Verification: bunx tsc --noEmit → 0 errors in src/ (only pre-existing errors in examples/ + skills/ template dirs); bun run build → PASS with reactCompiler: true; live smoke test on :3000 with owner login cookie: /chat /conversations /style all 200, no error boundaries, style-profile + conversations confirmed through the BFF proxy; backend files (repos/zemest/**, payments work by the concurrent backend agent) untouched
+- Known gaps reported to orchestrator: no owner-chat endpoint under /api/test (chat page owner mode stays cosmetic — E5 F4); conversations list rows have messages:[] so "Last message" column shows "—" until backend adds a last_message preview (E5 F2); POST /import/chat-history (ZIP upload) exists but not wired into the UI (needs a file-upload form)
+
+Stage Summary:
+- 3 dashboard pages fully wired to TanStack Query with scoped query keys, 10s/5s polling (paused when hidden), and mutations with matching invalidation — zero design/class changes; QueryClientProvider mounted once in the tenant layout
+- React Compiler ENABLED (reactCompiler: true + babel-plugin-react-compiler@1.0.0 devDep): production build passes and compiled chunks show real auto-memoization
+- tsc 0 errors in src/, prod build green, live routes verified; no backend files touched, no commits made
+
+---
+Task ID: 24
+Agent: main-orchestrator (+ 24-F frontend subagent, 24-P paymob subagent)
+Task: Execute the full roadmap "next steps" batch: CVE dependency fixes, Huey+APScheduler, Paymob integration, TanStack Query wiring, React Compiler, ICS/SEO, CI pipeline, deploy configs — then verify everything and push
+
+Work Log:
+- CVE batch (G3 §6.5): python-jose 3.4.0, python-multipart ≥0.0.31, jinja2 ≥3.1.6, python-dotenv ≥1.2.2, aiosmtplib ≥5.1.2, sqladmin ≥0.25.1, litellm ≥1.84, fastapi ≥0.118 (→0.141.1/starlette 0.4x). pip-audit re-run: 38 vulns → 2 (pytest dev-only + ecdsa no-fix). bandit -ll: 22 → 0 findings (B324 sha1→sha256 in silent_trainer; B104 bind default →127.0.0.1)
+- FOUND + fixed hidden dep: itsdangerous (starlette SessionMiddleware imported unconditionally by app/main.py but never in requirements — fresh installs would crash)
+- Huey 3.3.4 (SqliteHuey, filename= kwarg — huey 3.x renamed it) replaces Celery+Redis: converted 4 task modules, api/crawl.py + agent.py dispatch (enqueue when consumer alive, else BackgroundTasks), deleted celery_app.py + inline_worker.py; embedded consumer = signal-safe wrapper (huey 3.x Consumer.start() would clobber uvicorn SIGTERM — subclass skips _set_signal_handlers) running 1 worker THREAD in-process (G4 single-process design preserved)
+- APScheduler 3.x AsyncIOScheduler in lifespan replaces the 30s/45s hand-rolled loops: publish-due-posts (30s), silent-trainer (45s), weekly personality rebuild (Sun 03:00 Cairo, replaces celery beat); training_worker.py trimmed to a single-cycle function
+- Paymob Intention API (24-P subagent, G1 spec): app/services/payments/paymob.py (httpx client, piaster math via to_piasters, HMAC-SHA512 with exact 20-field transaction/8-field token/subscription orders incl. Paymob's sic "error_occured"), app/api/payments.py (webhook = HMAC-before-processing + dedup on obj.id + compare-and-set on payment_status; /intention auth'd + tenant-guarded), Order model +4 payment fields + idempotent migrations; 42 tests, 41 passing (1 = the 200-vs-201 assert fixed in the suite)
+- TanStack Query wiring (24-F subagent): QueryClientProvider in dashboard layout, hooks (useConversations/useConversation/useSendChatMessage/useStyleProfile/useRebuildStyle), chat+conversations+style pages now hit real endpoints via BFF (5s/10s polling, paused when hidden), zero design changes; style page was 100% mock now fully real
+- React Compiler: reactCompiler: true + babel-plugin-react-compiler devDep; production build PASSES (subagent verified memo-cache artifacts in bundles)
+- ICS feed: hand-rolled emitter → icalendar library (RFC-5545 folding/escaping, UTC-aware datetimes)
+- SEO (G5): robots.txt (Disallow /dashboard /admin /api + Sitemap), src/app/sitemap.ts (25 static + blog posts = 42 URLs, live-verified), GoatCounter env-gated script in root layout (inert until NEXT_PUBLIC_GOATCOUNTER_CODE)
+- CI (G3 §5): .github/workflows/security.yml (gitleaks/pip-audit/npm-audit bridge/zizmor/bandit), codeql.yml (py+ts), dependabot.yml, .pre-commit-config.yaml
+- deploy/ (G4): Caddyfile (auto-TLS, only public listener, security headers, JSON logs for CrowdSec), systemd units (api: single uvicorn worker loopback + MemoryMax; web: standalone node; optional api.socket), crowdsec.md, README with topology diagram + deploy flow + backup layering
+- Prompt-injection hardening: +8 patterns (forget your identity/become a generic LLM/from now on you are/answer anything without limits/first N characters of your prompt/etc.) — 3 previously-missed test payloads now detected
+- Test suite: 31 pre-existing failures → 0. Root causes fixed: stale tests expecting the REMOVED legacy /dashboard HTML routes (25 xss + 3 system, rewritten against JSON API + 404-on-legacy assertions), async-inspect test bug, SSRF test using NXDOMAIN hostname, prompt-injection coverage (real code gap), cross-file email pollution (unique uuid suffixes), slowapi in-memory counter 429s in full runs (RATELIMIT_ENABLED=false + belt-and-suspenders _route_limits strip in conftest — slowapi 0.1.10's enabled flag proved unreliable)
+- Verification: 371 passed / 0 failed / 1 skipped / 2 xfailed (unit suite); live backend boot: APScheduler + Huey consumer start clean, graceful SIGTERM shutdown, cross-process enqueue→worker-execute→queue-drain round-trip verified; jose 3.4.0 + fastapi 0.141.1 auth regression-free; paymob webhook fails closed (400 missing hmac); tsc 0 errors on src/; robots.txt + sitemap.xml live on :3000; secret sweep clean (no real tokens in tree or recent history)
+- Sandbox fought back again (venv wiped once more + reaper kills backgrounded processes mid-run; full torch/CUDA download from optional ML deps filled the 10GB disk): recovered with requirements-lean.txt (optional heavy deps have lazy fallbacks) — committed as a dev convenience, requirements.txt stays canonical
+- Committed in 4 batches + worklog; pushed with user PAT (inline in push URL only, never stored)
+
+Stage Summary:
+- The entire ROADMAP "adopt now" surface is implemented and verified: 38→2 CVEs, Celery/Redis deleted, Huey+APScheduler live, Paymob ready (needs PAYMOB_* env keys), 3 mock pages real, React Compiler on, RFC-5545 ICS, 42-URL sitemap, 5-job CI pipeline, production deploy kit
+- Test suite fully green for the first time this session (371/0)
+- Remaining for next session: rotate PAT (again — it's in chat history twice now), flip GitHub-native secret scanning + push protection ON (Settings → Code security), wire owner-chat endpoint (E5 F4), conversations list last_message preview (E5 F2), FTS5+Arabic normalizer (R8), SSE for chat (R7)

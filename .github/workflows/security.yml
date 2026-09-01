@@ -1,0 +1,75 @@
+name: security
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: "17 4 * * 1" # weekly: newly published CVEs vs our pins
+permissions:
+  contents: read
+  security-events: write # SARIF upload (zizmor)
+
+jobs:
+  gitleaks:
+    name: secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history — where the PAT incident lived
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE: only required for orgs — personal account = free
+
+  pip-audit:
+    name: python deps (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx pip-audit -r repos/zemest/requirements.txt
+        # 38 known vulns at G3-audit time; the 2026-09 upgrade batch fixed
+        # the runtime ones (jose/multipart/jinja2/dotenv/aiosmtplib/sqladmin/
+        # litellm/fastapi-starlette). Remaining advisories are dev-only or
+        # unfixed upstream (ecdsa). Flip to gating once fully clean —
+        # until then keep continue-on-error so the other jobs still report.
+        continue-on-error: true
+
+  npm-audit:
+    name: js deps (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install --package-lock-only --ignore-scripts
+      - run: npm audit --audit-level=high
+        # bun.lock stays canonical; this is the CI-only bridge (G3 §2.3)
+
+  zizmor:
+    name: workflows (zizmor)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx zizmor --format sarif --output zizmor.sarif .
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: zizmor.sarif
+
+  bandit:
+    name: python sast-lite (bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx bandit -r repos/zemest/app -ll -f txt
+        # -ll = medium+ only. The 2026-09 batch fixed the last HIGH (B324
+        # sha1 in silent_trainer) and MED (B104 0.0.0.0 bind) findings.

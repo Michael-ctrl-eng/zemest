@@ -1,0 +1,42 @@
+# /etc/caddy/Caddyfile — zemest production
+# The site address (domain) triggers automatic HTTPS + HTTP→HTTPS redirect.
+# Replace zemest.example.com with the real domain before deploying.
+zemest.example.com {
+	encode zstd gzip
+
+	# OPTIONAL: exact-path passthrough for Meta webhook callbacks, if a
+	# callback URL must hit FastAPI directly instead of the Next BFF.
+	# handle /webhook/* {
+	#     reverse_proxy 127.0.0.1:8000
+	# }
+
+	# Default: everything (pages + /api/zemest/* BFF proxying) → Next standalone
+	handle {
+		reverse_proxy 127.0.0.1:3000 {
+			health_uri /            # use /healthz once added (E10 F13)
+			health_interval 10s
+			health_timeout 3s
+			health_status 2xx
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-X-Powered-By              # strips Next's leak (E10 F2; also set poweredByHeader:false)
+	}
+
+	log {
+		output file /var/log/caddy/zemest.access.log {
+			roll_size 50MiB
+			roll_keep 10
+		}
+		format json               # CrowdSec's caddy parser consumes this format
+	}
+}
+
+# Install: official apt repo (dl.cloudsmith.io/caddy/stable) or static binary.
+# uvicorn side must run with --proxy-headers --forwarded-allow-ips 127.0.0.1
+# (defaults already match loopback) so FastAPI sees real client IPs.
+# Keep the admin endpoint on localhost:2019 (default) — it can reload config.

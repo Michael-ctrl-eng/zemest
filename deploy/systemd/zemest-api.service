@@ -1,0 +1,37 @@
+# /etc/systemd/system/zemest-api.service
+# Single uvicorn worker on loopback. The in-process design (APScheduler
+# periodic jobs + embedded Huey consumer) means exactly ONE worker; systemd's
+# default KillMode=control-group stops the Huey consumer subprocess with the
+# API process — no orphaned workers.
+[Unit]
+Description=Zemest FastAPI (uvicorn, single worker — in-process scheduler+queue)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=zemest
+Group=zemest
+WorkingDirectory=/opt/zemest/backend
+EnvironmentFile=/etc/zemest/api.env        # 0640 root:zemest: JWT_SECRET_KEY, FB_*, SMTP_*, PAYMOB_*, APP_ENV=production
+ExecStart=/opt/zemest/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1 \
+    --no-server-header \
+    --timeout-keep-alive 65 \
+    --limit-concurrency 200
+Restart=always
+RestartSec=3
+TimeoutStopSec=25                          # > graceful drain window; lifespan stops scheduler + huey
+KillSignal=SIGTERM                         # uvicorn drains on SIGTERM
+MemoryHigh=700M                            # soft throttle
+MemoryMax=1G                               # hard cap → systemd restart, not kernel OOM
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/zemest/backend/data /var/log/zemest
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

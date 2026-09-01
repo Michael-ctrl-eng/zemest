@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /repos/zemest
+    schedule:
+      interval: weekly
+    groups:
+      dependencies:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # NOTE: npm ecosystem not enabled — Dependabot doesn't parse bun.lock yet.
+  # If a committed package-lock.json ever appears, add an npm entry here.
