@@ -7,6 +7,7 @@ from sqlalchemy import ForeignKey, String, Text, Boolean, Numeric, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.utils.token_crypto import _make_encrypted_property, is_token_encrypted
 
 
 class Tenant(Base):
@@ -17,7 +18,11 @@ class Tenant(Base):
     # --- Page connections (multi-channel per page) ---
     fb_page_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True)
     page_name: Mapped[str] = mapped_column(String(255))
-    page_access_token: Mapped[Optional[str]] = mapped_column(Text)
+    # RAW storage columns — always access through the hybrid properties
+    # below (they Fernet-encrypt on write, decrypt on read; audit B7-04).
+    _page_access_token_raw: Mapped[Optional[str]] = mapped_column(
+        "page_access_token", Text
+    )
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
     # Page owner's own Messenger PSID — messages from this sender bypass the
@@ -26,12 +31,23 @@ class Tenant(Base):
 
     # Instagram
     ig_user_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
-    ig_access_token: Mapped[Optional[str]] = mapped_column(Text)
+    _ig_access_token_raw: Mapped[Optional[str]] = mapped_column(
+        "ig_access_token", Text
+    )
 
     # WhatsApp (via WhatsApp Business API or WAHA)
     wa_phone_number_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
-    wa_access_token: Mapped[Optional[str]] = mapped_column(Text)
+    _wa_access_token_raw: Mapped[Optional[str]] = mapped_column(
+        "wa_access_token", Text
+    )
     wa_waba_id: Mapped[Optional[str]] = mapped_column(String(64))
+
+    # Transparent encryption layer: `tenant.page_access_token` reads
+    # plaintext and encrypts on assignment — every existing caller keeps
+    # working unchanged, while the DB column holds ciphertext only.
+    page_access_token = _make_encrypted_property("_page_access_token_raw")
+    ig_access_token = _make_encrypted_property("_ig_access_token_raw")
+    wa_access_token = _make_encrypted_property("_wa_access_token_raw")
 
     # --- Channel connection metadata (account display info + connect time) ---
     messenger_meta: Mapped[Optional[dict]] = mapped_column(JSON, default=None)

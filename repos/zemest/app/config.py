@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     # these from the request Host header is attacker-controllable behind
     # proxies). Required for intention creation; no default on purpose.
     PUBLIC_BASE_URL: str = ""
+    # Fernet key for encrypting channel access tokens at rest (audit
+    # B7-04/V5: the DPA promises encrypted-at-rest; columns were plaintext).
+    # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    TENANT_TOKEN_ENCRYPTION_KEY: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
