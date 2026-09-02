@@ -88,6 +88,15 @@ def parse_whatsapp_export_zip(zip_bytes: bytes, page_owner_name: str | None = No
             if not txt_name:
                 raise ValueError("No .txt file found in WhatsApp export ZIP")
 
+            # Zip-bomb guard (audit A4-H3): check uncompressed size first.
+            _MAX_MEMBER_BYTES = 100 * 1024 * 1024  # 100 MB of chat text
+            info = zf.getinfo(txt_name)
+            if info.file_size > _MAX_MEMBER_BYTES:
+                raise ValueError(
+                    f"Chat export too large ({info.file_size // (1024*1024)} MB); "
+                    f"max {_MAX_MEMBER_BYTES // (1024*1024)} MB"
+                )
+
             with zf.open(txt_name) as f:
                 lines = f.read().decode("utf-8", errors="replace").splitlines()
 

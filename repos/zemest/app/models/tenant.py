@@ -38,6 +38,12 @@ class Tenant(Base):
     instagram_meta: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     whatsapp_meta: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
 
+    # --- Postiz scheduling sidecar (per-tenant session; audit A4-H1: the
+    # previous design shared ONE process-wide Postiz session across every
+    # tenant — any tenant's login hijacked everyone's scheduling) ---
+    postiz_email: Mapped[Optional[str]] = mapped_column(String(255))
+    postiz_token: Mapped[Optional[str]] = mapped_column(Text)
+
     # --- Calendar subscription (ICS feed auth token) ---
     calendar_token: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True)
 

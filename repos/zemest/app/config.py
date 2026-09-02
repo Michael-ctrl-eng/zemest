@@ -50,7 +50,13 @@ class Settings(BaseSettings):
     FB_APP_ID: str = ""
     FB_APP_SECRET: str = ""
     FB_VERIFY_TOKEN: str = "zemest-verify-token"
-    FB_GRAPH_API_URL: str = "https://graph.facebook.com/v21.0"
+    # Graph version bump: v21.0 → v22.0 (Meta deprecates old versions ~2 yrs;
+    # v21 entered deprecation 2025). All Graph calls go through
+    # app/services/graph_client.py (Bearer-only) — one place to bump again.
+    FB_GRAPH_API_URL: str = "https://graph.facebook.com/v22.0"
+    # Origin used to build the OAuth redirect_uri in the callback (must match
+    # the /channels/oauth-url origin). Set to your public frontend origin.
+    FB_OAUTH_REDIRECT_ORIGIN: str = "https://localhost:3000"
 
     # Voice transcription (faster-whisper, local, free)
     WHISPER_MODEL: str = "small"

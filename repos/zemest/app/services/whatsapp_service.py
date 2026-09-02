@@ -4,9 +4,13 @@ import logging
 
 import httpx
 
+from app.config import get_settings
+
 logger = logging.getLogger(__name__)
 
-WHATSAPP_API_URL = "https://graph.facebook.com/v21.0"
+# Single source of truth for the Graph version (config bumped to v22.0);
+# Bearer-only auth everywhere (audit A4-H2).
+WHATSAPP_API_URL = get_settings().FB_GRAPH_API_URL
 
 
 async def send_whatsapp_message(tenant, recipient_id: str, text: str) -> bool:

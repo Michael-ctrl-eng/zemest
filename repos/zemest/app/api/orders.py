@@ -30,7 +30,10 @@ def _order_response(o) -> OrderResponse:
         api_status=o.api_status,
         api_status_code=o.api_status_code,
         api_external_id=o.api_external_id,
-        api_response=o.api_response,
+        # Trimmed: the full 2000-char external body (with the merchant's
+        # provider internals) previously rode along on every list response
+        # (audit A3-L2).
+        api_response=(o.api_response or "")[:200] or None,
         api_called_at=str(o.api_called_at) if o.api_called_at else None,
         subtotal=o.subtotal, delivery_charge=o.delivery_charge,
         total=o.total, status=o.status, notes=o.notes,

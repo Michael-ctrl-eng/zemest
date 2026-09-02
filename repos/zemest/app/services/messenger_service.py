@@ -2,6 +2,9 @@
 
 Handles sending messages, sender actions, and attachments for both
 Messenger and Instagram channels — matching Chatwoot's capabilities.
+
+All calls use the ``Authorization: Bearer`` header (audit A4-H2 — tokens
+previously traveled in URL query strings, landing in proxy/access logs).
 """
 import logging
 
@@ -11,6 +14,10 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +35,7 @@ async def send_sender_action(page_access_token: str, recipient_id: str, action: 
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(
                 url, json=payload,
-                params={"access_token": page_access_token},
+                headers=_bearer(page_access_token),
             )
             return resp.status_code == 200
     except Exception as e:
@@ -75,7 +82,7 @@ async def send_text_message(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 url, json=payload,
-                params={"access_token": page_access_token},
+                headers=_bearer(page_access_token),
             )
             data = resp.json()
 
@@ -128,7 +135,7 @@ async def send_quick_replies(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 url, json=payload,
-                params={"access_token": page_access_token},
+                headers=_bearer(page_access_token),
             )
             return resp.json()
     except Exception as e:
@@ -166,7 +173,7 @@ async def send_attachment(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 api_url, json=payload,
-                params={"access_token": page_access_token},
+                headers=_bearer(page_access_token),
             )
             data = resp.json()
 
@@ -207,10 +214,8 @@ async def get_user_profile(page_access_token: str, psid: str) -> dict:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 url,
-                params={
-                    "access_token": page_access_token,
-                    "fields": "first_name,last_name,profile_pic",
-                },
+                params={"fields": "first_name,last_name,profile_pic"},
+                headers=_bearer(page_access_token),
             )
             if resp.status_code == 200:
                 return resp.json()
