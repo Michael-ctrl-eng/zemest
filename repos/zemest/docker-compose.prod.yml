@@ -1,0 +1,177 @@
+# Zemest production stack — 10K+ users/day on a small budget.
+#
+# Shape (single 4-8 GB VPS first; horizontal path in docs/SCALING.md):
+#   nginx      — TLS, HTTP/2, rate limiting, static frontend
+#   web (x2)   — FastAPI replicas behind nginx; scheduler jobs are
+#                 deduplicated across replicas via Postgres advisory locks
+#                 (app/services/leader_election.py)
+#   worker     — Huey consumer: crawls, notifications, heavy imports
+#   postgres16 — primary (+ optional read replica later)
+#   pgbouncer  — connection pooling (transaction mode) so N replicas never
+#                 exhaust Postgres connections
+#   redis      — rate limiting, cache, future queues
+#   postiz     — scheduling sidecar (per-tenant sessions, see app/api/postiz.py)
+#
+# First deploy: `docker compose -f docker-compose.prod.yml up -d`
+# Secrets: copy .env.prod.example → .env.prod and fill it — never commit it.
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://zemest:${POSTGRES_PASSWORD}@pgbouncer:6432/zemest
+  REDIS_URL: redis://redis:6379/0
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+  APP_ENV: production
+  APP_DEBUG: "false"
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set in .env.prod}
+  TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?set in .env.prod}
+  FB_APP_ID: ${FB_APP_ID:-}
+  FB_APP_SECRET: ${FB_APP_SECRET:-}
+  FB_VERIFY_TOKEN: ${FB_VERIFY_TOKEN:?set in .env.prod}
+  PAYMOB_API_KEY: ${PAYMOB_API_KEY:-}
+  PAYMOB_WEBHOOK_HMAC_SECRET: ${PAYMOB_WEBHOOK_HMAC_SECRET:-}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  POSTIZ_URL: http://postiz:4007/api
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zemest
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env.prod}
+      POSTGRES_DB: zemest
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zemest -d zemest"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "wal_level=replica"          # future read replica without restart
+      - "-c"
+      - "log_min_duration_statement=500"  # slow-query log
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_USER: zemest
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: postgres
+      DB_NAME: zemest
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "400"          # N replicas × workers + admin
+      DEFAULT_POOL_SIZE: "40"
+      SERVER_RESET_QUERY: DISCARD ALL
+    ports:
+      - "127.0.0.1:6432:6432"         # host-local only
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      # Scheduler jobs run in BOTH replicas; advisory locks keep each tick
+      # single-flight (exactly one replica executes, the other skips).
+      SCHEDULER_INLINE_WORKER: "true"
+      SILENT_TRAINER_INLINE_WORKER: "true"
+    deploy:
+      replicas: 2                     # nginx load-balances; raise with load
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    expose:
+      - "8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      # Dedicated worker owns the Huey queue; web replicas enqueue only.
+      HUEY_INLINE_CONSUMER: "true"
+    command: ["python", "-m", "app.tasks.huey_worker"]
+    deploy:
+      replicas: 1                     # scale for crawl-heavy tenants
+
+  postiz:
+    image: ghcr.io/gitroomhq/postiz-app:latest
+    restart: unless-stopped
+    environment:
+      MAIN_URL: ${POSTIZ_MAIN_URL:-http://localhost:4007}
+      FRONTEND_URL: ${POSTIZ_MAIN_URL:-http://localhost:4007}
+      NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_MAIN_URL:-http://localhost:4007}/api
+      JWT_SECRET: ${POSTIZ_JWT_SECRET:?set in .env.prod}
+      DATABASE_URL: postgresql://postiz:${POSTIZ_POSTGRES_PASSWORD:?}@postgres:5432/postiz
+      REDIS_URL: redis://redis:6379/1
+      IS_GENERAL: "true"
+      DISABLE_REGISTRATION: "false"
+      BACKEND_INTERNAL_URL: http://localhost:4007
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+    volumes:
+      - postiz-uploads:/uploads
+      - postiz-config:/config/
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "4007"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pgdata:
+  postiz-uploads:
+  postiz-config:

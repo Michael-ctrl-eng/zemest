@@ -238,17 +238,46 @@ async def lifespan(app: FastAPI):
 
         scheduler = AsyncIOScheduler(timezone="Africa/Cairo")
 
+        # Leader election (audit F8): with N API replicas every scheduler
+        # fires the same jobs. Each execution grabs a per-job Postgres
+        # advisory lock first — exactly one replica runs the tick, the rest
+        # skip (Postiz pattern, hardened: per-job locks instead of a
+        # leader process). SQLite/dev falls back to always-run (safe —
+        # single process + max_instances=1).
+        from app.database import async_session
+        from app.services.leader_election import try_job_lock
+
+        async def _guarded(job_name: str, fn):
+            # Lock lives on a dedicated session's connection; explicitly
+            # released + rolled back so it never lingers on a pooled conn.
+            async with async_session() as lock_db:
+                if not await try_job_lock(lock_db, job_name):
+                    return
+                try:
+                    await fn()
+                except Exception:
+                    _mlog.getLogger("app.main").error(
+                        "Job %s failed", job_name, exc_info=True
+                    )
+                finally:
+                    from app.services.leader_election import release_job_lock
+                    try:
+                        await release_job_lock(lock_db, job_name)
+                        await lock_db.rollback()
+                    except Exception:
+                        pass
+
         async def _publish_job():
             from app.tasks.scheduling_tasks import _publish_due_posts_async
-            await _publish_due_posts_async()
+            await _guarded("publish-due-posts", _publish_due_posts_async)
 
         async def _trainer_job():
             from app.tasks.training_worker import training_cycle_once
-            await training_cycle_once()
+            await _guarded("silent-trainer", training_cycle_once)
 
         async def _personality_job():
             from app.tasks.style_tasks import _rebuild_all_personalities_async
-            await _rebuild_all_personalities_async()
+            await _guarded("rebuild-personality-weekly", _rebuild_all_personalities_async)
 
         if str(getattr(settings, "SCHEDULER_INLINE_WORKER", True)).lower() in (
             "1", "true", "yes", "on",
@@ -257,7 +286,8 @@ async def lifespan(app: FastAPI):
             # within ~30s of their scheduled time; coalesce catches up after
             # a sleep/restart without hot-looping.
             scheduler.add_job(
-                _publish_job, "interval", seconds=30,
+                _publish_job,
+                "interval", seconds=30,
                 id="publish-due-posts", max_instances=1, coalesce=True,
             )
         else:
@@ -268,7 +298,8 @@ async def lifespan(app: FastAPI):
             "1", "true", "yes", "on",
         ):
             scheduler.add_job(
-                _trainer_job, "interval", seconds=45,
+                _trainer_job,
+                "interval", seconds=45,
                 id="silent-trainer", max_instances=1, coalesce=True,
             )
         else:
@@ -277,7 +308,8 @@ async def lifespan(app: FastAPI):
 
         # Weekly personality rebuild — Sunday 03:00 Cairo (was Celery beat).
         scheduler.add_job(
-            _personality_job, "cron", day_of_week="sun", hour=3, minute=0,
+            _personality_job,
+            "cron", day_of_week="sun", hour=3, minute=0,
             id="rebuild-personality-weekly", max_instances=1, coalesce=True,
         )
         scheduler.start()
