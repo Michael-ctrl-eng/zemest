@@ -28,7 +28,7 @@ async def send_sender_action(page_access_token: str, recipient_id: str, action: 
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(
                 url, json=payload,
-                params={"access_token": page_access_token},
+                headers={"Authorization": f"Bearer {page_access_token}"},
             )
             return resp.status_code == 200
     except Exception as e:
@@ -75,7 +75,7 @@ async def send_text_message(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 url, json=payload,
-                params={"access_token": page_access_token},
+                headers={"Authorization": f"Bearer {page_access_token}"},
             )
             data = resp.json()
 
@@ -128,7 +128,7 @@ async def send_quick_replies(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 url, json=payload,
-                params={"access_token": page_access_token},
+                headers={"Authorization": f"Bearer {page_access_token}"},
             )
             return resp.json()
     except Exception as e:
@@ -166,7 +166,7 @@ async def send_attachment(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 api_url, json=payload,
-                params={"access_token": page_access_token},
+                headers={"Authorization": f"Bearer {page_access_token}"},
             )
             data = resp.json()
 
@@ -207,10 +207,8 @@ async def get_user_profile(page_access_token: str, psid: str) -> dict:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 url,
-                params={
-                    "access_token": page_access_token,
-                    "fields": "first_name,last_name,profile_pic",
-                },
+                params={"fields": "first_name,last_name,profile_pic"},
+                headers={"Authorization": f"Bearer {page_access_token}"},
             )
             if resp.status_code == 200:
                 return resp.json()

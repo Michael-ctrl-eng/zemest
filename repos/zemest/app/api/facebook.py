@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -8,30 +9,51 @@ from app.services import facebook_service
 router = APIRouter(prefix="/api/facebook", tags=["Facebook"])
 
 
-@router.get("/pages")
+class ListPagesRequest(BaseModel):
+    """Body model — the user token NEVER travels in the URL (audit A4-H2)."""
+
+    fb_access_token: str = Field(..., min_length=20, max_length=2000)
+
+
+class ConnectPageRequest(BaseModel):
+    """Body model — the page token NEVER travels in the URL (audit A4-H2)."""
+
+    page_id: str = Field(..., min_length=1, max_length=64)
+    page_access_token: str = Field(..., min_length=20, max_length=2000)
+    page_name: str = Field(..., min_length=1, max_length=255)
+
+
+@router.post("/pages")
 async def list_pages(
-    fb_access_token: str,
+    req: ListPagesRequest,
     user=Depends(get_current_user),
 ):
-    """List Facebook pages the user manages."""
-    pages = await facebook_service.get_user_pages(fb_access_token)
+    """List Facebook pages the user manages.
+
+    POST + JSON body: the token stays out of query strings, proxies and
+    access logs (was ``GET /pages?fb_access_token=EAAG…``).
+    """
+    pages = await facebook_service.get_user_pages(req.fb_access_token)
     return {"pages": pages}
 
 
 @router.post("/connect")
 async def connect_page(
-    page_id: str,
-    page_access_token: str,
-    page_name: str,
+    req: ConnectPageRequest,
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Connect a Facebook page to the platform."""
+    """Connect a Facebook page to the platform.
+
+    POST + JSON body (was query-string params on POST — FastAPI binds
+    plain function params to the query string, so the Page token traveled
+    in the URL even on POST).
+    """
     from app.services.tenant_service import create_tenant
 
     # Subscribe to webhook
     success = await facebook_service.subscribe_page_to_webhook(
-        page_id, page_access_token
+        req.page_id, req.page_access_token
     )
     if not success:
         raise HTTPException(
@@ -41,9 +63,9 @@ async def connect_page(
     tenant = await create_tenant(
         db,
         user,
-        page_name=page_name,
-        fb_page_id=page_id,
-        page_access_token=page_access_token,
+        page_name=req.page_name,
+        fb_page_id=req.page_id,
+        page_access_token=req.page_access_token,
     )
 
     return {

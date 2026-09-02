@@ -1,9 +1,13 @@
-"""Facebook Page management — webhook subscription, page listing, catalog sync."""
+"""Facebook Page management — webhook subscription, page listing, catalog sync.
+
+All Graph calls go through :mod:`app.services.graph_client` — Bearer
+header only (tokens NEVER in URLs — audit A4-H2 / D4-G5), keep-alive
+connection, single v22.0 version constant.
+"""
 import logging
 
-import httpx
-
 from app.config import get_settings
+from app.services.graph_client import graph_get, graph_post
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -11,20 +15,12 @@ settings = get_settings()
 
 async def get_user_pages(user_access_token: str) -> list[dict]:
     """Get list of Facebook pages managed by user."""
-    url = f"{settings.FB_GRAPH_API_URL}/me/accounts"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                url,
-                params={"access_token": user_access_token, "fields": "id,name,access_token"},
-            )
-            if resp.status_code == 200:
-                return resp.json().get("data", [])
-            logger.warning(f"get_user_pages failed: {resp.status_code}")
-            return []
-    except Exception as e:
-        logger.error(f"get_user_pages error: {e}")
-        return []
+    data = await graph_get(
+        "me/accounts",
+        token=user_access_token,
+        fields="id,name,access_token",
+    )
+    return data.get("data", [])
 
 
 async def subscribe_page_to_webhook(page_id: str, page_access_token: str) -> bool:
@@ -38,7 +34,6 @@ async def subscribe_page_to_webhook(page_id: str, page_access_token: str) -> boo
     - messaging_postbacks: button click postbacks
     - standby: standby queue for handover protocol
     """
-    url = f"{settings.FB_GRAPH_API_URL}/{page_id}/subscribed_apps"
     subscribed_fields = [
         "messages",
         "message_deliveries",
@@ -47,21 +42,18 @@ async def subscribe_page_to_webhook(page_id: str, page_access_token: str) -> boo
         "messaging_postbacks",
         "standby",
     ]
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                url,
-                params={"access_token": page_access_token},
-                json={"subscribed_fields": subscribed_fields},
-            )
-            if resp.status_code == 200:
-                logger.info(f"Page {page_id} subscribed to webhook fields: {subscribed_fields}")
-                return True
-            logger.warning(f"subscribe_page_to_webhook failed: {resp.status_code} {resp.text}")
-            return False
-    except Exception as e:
-        logger.error(f"subscribe_page_to_webhook error: {e}")
-        return False
+    result = await graph_post(
+        f"{page_id}/subscribed_apps",
+        token=page_access_token,
+        json_body={"subscribed_fields": subscribed_fields},
+    )
+    if result or result == {}:
+        # graph_post returns {} on failure; success returns {"success": true}.
+        if result:
+            logger.info("Page %s subscribed to webhook fields: %s", page_id, subscribed_fields)
+            return True
+    logger.warning("subscribe_page_to_webhook failed for page %s", page_id)
+    return False
 
 
 async def subscribe_instagram_to_webhook(ig_user_id: str, access_token: str) -> bool:
@@ -72,56 +64,36 @@ async def subscribe_instagram_to_webhook(ig_user_id: str, access_token: str) -> 
     - message_reactions: reactions on messages
     - messaging_seen: read receipts
     """
-    url = f"{settings.FB_GRAPH_API_URL}/{ig_user_id}/subscribed_apps"
     subscribed_fields = [
         "messages",
         "message_reactions",
         "messaging_seen",
     ]
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                url,
-                params={"access_token": access_token},
-                json={"subscribed_fields": subscribed_fields},
-            )
-            if resp.status_code == 200:
-                logger.info(f"Instagram {ig_user_id} subscribed: {subscribed_fields}")
-                return True
-            logger.warning(f"subscribe_instagram failed: {resp.status_code} {resp.text}")
-            return False
-    except Exception as e:
-        logger.error(f"subscribe_instagram error: {e}")
-        return False
+    result = await graph_post(
+        f"{ig_user_id}/subscribed_apps",
+        token=access_token,
+        json_body={"subscribed_fields": subscribed_fields},
+    )
+    if result:
+        logger.info("Instagram %s subscribed: %s", ig_user_id, subscribed_fields)
+        return True
+    logger.warning("subscribe_instagram failed for %s", ig_user_id)
+    return False
 
 
 async def get_page_products(page_id: str, page_access_token: str) -> list[dict]:
     """Fetch products from Facebook page's product catalog."""
-    url = f"{settings.FB_GRAPH_API_URL}/{page_id}/product_catalogs"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                url, params={"access_token": page_access_token},
-            )
-            if resp.status_code != 200:
-                return []
-
-            catalogs = resp.json().get("data", [])
-            if not catalogs:
-                return []
-
-            catalog_id = catalogs[0]["id"]
-            products_url = f"{settings.FB_GRAPH_API_URL}/{catalog_id}/products"
-            resp = await client.get(
-                products_url,
-                params={
-                    "access_token": page_access_token,
-                    "fields": "id,name,description,price,image_url,availability",
-                },
-            )
-            if resp.status_code == 200:
-                return resp.json().get("data", [])
-            return []
-    except Exception as e:
-        logger.error(f"get_page_products error: {e}")
+    catalogs = (await graph_get(
+        f"{page_id}/product_catalogs",
+        token=page_access_token,
+    )).get("data", [])
+    if not catalogs:
         return []
+
+    catalog_id = catalogs[0]["id"]
+    products = (await graph_get(
+        f"{catalog_id}/products",
+        token=page_access_token,
+        fields="id,name,description,price,image_url,availability",
+    )).get("data", [])
+    return products

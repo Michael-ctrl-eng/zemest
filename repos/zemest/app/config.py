@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     FB_APP_ID: str = ""
     FB_APP_SECRET: str = ""
     FB_VERIFY_TOKEN: str = "zemest-verify-token"
-    FB_GRAPH_API_URL: str = "https://graph.facebook.com/v21.0"
+    FB_GRAPH_API_URL: str = "https://graph.facebook.com/v22.0"
 
     # Voice transcription (faster-whisper, local, free)
     WHISPER_MODEL: str = "small"

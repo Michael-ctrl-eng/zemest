@@ -500,6 +500,22 @@ async def _process_whatsapp_message(phone_number_id: str, msg: dict, contacts: l
                 logger.warning(f"No tenant for WhatsApp number {phone_number_id}")
                 return
 
+            # Audit D4-M1: WhatsApp webhooks deliver MEDIA IDS, not URLs.
+            # The old code passed raw IDs downstream as if they were URLs —
+            # vision/transcription got Graph node IDs and failed silently.
+            # Resolve each ID to its (5-minute) download URL first.
+            from app.services.whatsapp_service import resolve_media
+
+            if tenant.wa_access_token:
+                media_urls = [
+                    (await resolve_media(tenant, mid)).get("url") or mid
+                    for mid in media_urls
+                ]
+                audio_urls = [
+                    (await resolve_media(tenant, aid)).get("url") or aid
+                    for aid in audio_urls
+                ]
+
             from app.ai.agent import process_customer_message
             from app.services.whatsapp_service import send_whatsapp_message
 

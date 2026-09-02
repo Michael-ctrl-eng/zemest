@@ -70,14 +70,18 @@ class TestMessageRequest(BaseModel):
 # ============================================================
 
 async def _graph_get(path: str, token: str, fields: str) -> dict:
-    """GET from the Graph API. Returns the parsed JSON on 200.
+    """GET from the Graph API via the shared Bearer-only client (token
+    never in the URL — audit A4-H2/D4-G5). Returns the parsed JSON on 200.
     Raises HTTPException with the REAL Graph error message otherwise."""
+    from app.services.graph_client import get_graph_client
+
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(
-                f"{GRAPH}/{path}",
-                params={"access_token": token, "fields": fields},
-            )
+        client = await get_graph_client()
+        resp = await client.get(
+            f"{GRAPH}/{path}",
+            params={"fields": fields},
+            headers={"Authorization": f"Bearer {token}"},
+        )
     except httpx.TimeoutException:
         raise HTTPException(504, "Meta Graph API timed out — try again")
     except httpx.HTTPError as e:

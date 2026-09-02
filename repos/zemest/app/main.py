@@ -317,6 +317,11 @@ async def lifespan(app: FastAPI):
         await _close_paymob()
     except Exception:
         pass
+    try:
+        from app.services.graph_client import aclose as _close_graph
+        await _close_graph()
+    except Exception:
+        pass
     await engine.dispose()
 
 
