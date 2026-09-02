@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uvx pip-audit -r repos/zemest/requirements.txt
         # 38 known vulns at G3-audit time; the 2026-09 upgrade batch fixed
         # the runtime ones (jose/multipart/jinja2/dotenv/aiosmtplib/sqladmin/
@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       # zizmor has no --output flag (SARIF goes to stdout); redirect instead.
       # Version pinned so exit-code semantics can't drift under us.
       - run: uvx zizmor@1.30.0 --format sarif . > zizmor.sarif
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uvx bandit -r repos/zemest/app -ll -f txt
         # -ll = medium+ only. The 2026-09 batch fixed the last HIGH (B324
         # sha1 in silent_trainer) and MED (B104 0.0.0.0 bind) findings.
