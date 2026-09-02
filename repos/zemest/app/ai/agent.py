@@ -184,6 +184,27 @@ async def process_customer_message(
 
     llm_messages.append({"role": "user", "content": user_content})
 
+    # 8.6 Plan quotas (audit A5-H1 — the LLM ladder previously had no
+    #    ceiling: one spamming page burned the shared provider budget with
+    #    no cap). Monthly message quota + daily LLM token budget are
+    #    enforced BEFORE the LLM call; over-quota traffic gets an honest
+    #    holding reply instead of a silent 500 or infinite spend.
+    from app.models.user import User
+    owner = (await db.execute(
+        select(User).where(User.id == tenant.owner_id)
+    )).scalar_one_or_none()
+    if owner is not None:
+        from app.services.plan_service import PlanLimitError
+        try:
+            from app.services.plan_service import check_llm_budget
+            await check_llm_budget(db, tenant, owner)
+        except PlanLimitError:
+            logger.warning(
+                "LLM budget exhausted for tenant %s (plan=%s) — holding reply",
+                tenant.id, getattr(owner, "plan", "free"),
+            )
+            return _get_quota_holding_reply()
+
     # 9. Call LLM (bounded: a slow/hung provider degrades to fallback instead
     #    of blocking the single worker for minutes).
     token_info = None
@@ -560,3 +581,16 @@ def _get_fallback_response(language: str) -> str:
         return "Sorry, msh a2dar arud dilwaqti. Try tani ba3d shwaya. 🙏"
     else:
         return "Sorry, I'm unable to respond at the moment. Please try again shortly. 🙏"
+
+
+def _get_quota_holding_reply() -> str:
+    """Plan-quota holding reply (A5-H1 / plans module).
+
+    Honest with the customer (no fake availability, no silent drop) and
+    keeps the door open: the merchant sees the quota warning in the
+    dashboard and can upgrade or wait for the reset.
+    """
+    return (
+        "شكراً لرسالتك! 🧡 وصلنا الحد اليومي للردود الآلية مؤقتاً "
+        "— فريق المتجر هيكمل معاك في أقرب وقت ممكن."
+    )

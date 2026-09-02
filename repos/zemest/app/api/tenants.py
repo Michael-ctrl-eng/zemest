@@ -72,6 +72,14 @@ async def create_tenant(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Plan gate (app/services/plan_service.py): shop count per account.
+    from app.services.plan_service import check_can_create_shop, PlanLimitError
+    from app.api.plans import plan_limit_http_error
+    try:
+        await check_can_create_shop(db, user)
+    except PlanLimitError as e:
+        raise plan_limit_http_error(e)
+
     tenant = await tenant_service.create_tenant(
         db, user, **req.model_dump(),
     )

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import auth, tenants, products, orders, conversations, customers, address, crawl, webhook, facebook, test_chat
-from app.api import style_learning, scheduling, postiz, demo_chat, channels, calendar, payments
+from app.api import style_learning, scheduling, postiz, demo_chat, channels, calendar, payments, plans, blog
 
 api_router = APIRouter()
 
@@ -23,3 +23,6 @@ api_router.include_router(demo_chat.router)
 api_router.include_router(channels.router)
 api_router.include_router(calendar.router)
 api_router.include_router(payments.router)
+api_router.include_router(plans.router)
+api_router.include_router(blog.router)
+api_router.include_router(blog.public_router)

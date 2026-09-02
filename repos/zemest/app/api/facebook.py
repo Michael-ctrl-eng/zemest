@@ -103,6 +103,14 @@ async def connect_page(
         req.page_id, req.page_access_token
     )
 
+    # Plan gate (app/services/plan_service.py): shop count per account.
+    from app.services.plan_service import check_can_create_shop, PlanLimitError
+    try:
+        await check_can_create_shop(db, user)
+    except PlanLimitError as e:
+        from app.api.plans import plan_limit_http_error
+        raise plan_limit_http_error(e)
+
     tenant = await create_tenant(
         db,
         user,

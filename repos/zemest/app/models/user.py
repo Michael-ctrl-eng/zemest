@@ -23,6 +23,10 @@ class User(Base):
     # Admin kill-switch: blocked users fail auth with 403 and every refresh
     # token is revoked at block time.
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Subscription plan: free | growth | pro. Gates shop count, channel
+    # count, monthly messages and daily LLM tokens (app/services/plan_service.py).
+    # Upgrades are payment-gated in production (Paymob) — see /api/me/plan.
+    plan: Mapped[str] = mapped_column(String(20), default="free", server_default="free")
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
 
     tenants = relationship("Tenant", back_populates="owner")
