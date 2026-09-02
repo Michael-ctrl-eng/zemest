@@ -15,6 +15,7 @@ from app.ai.llm_client import chat_completion_with_usage
 from app.ai.order_collector import clean_response_for_customer, extract_order_from_response
 from app.ai.prompts import get_system_prompt
 from app.knowledge.retriever import retrieve_context
+from app.middleware.prompt_injection import detect_prompt_injection, sanitize_user_input
 from app.models.conversation import Conversation
 from app.models.customer import Customer
 from app.models.message import Message
@@ -79,7 +80,15 @@ async def process_customer_message(
     # 2. Get or create active conversation
     conversation = await _get_or_create_conversation(db, tenant.id, customer.id, channel)
 
-    # 3. Save customer message
+    # 3. Load conversation history BEFORE adding the current customer
+    #    message (audit A5-M2): the SELECT below triggers session autoflush,
+    #    so the just-added message was returned as the newest history row AND
+    #    appended again as the user turn — every request contained the
+    #    customer's message twice (double token cost, double injection
+    #    weight).
+    history = await _load_conversation_history(db, conversation.id)
+
+    # 4. Save customer message
     customer_msg = Message(
         id=uuid.uuid4(),
         conversation_id=conversation.id,
@@ -90,9 +99,6 @@ async def process_customer_message(
         media_urls=media_urls or [],
     )
     db.add(customer_msg)
-
-    # 4. Load conversation history
-    history = await _load_conversation_history(db, conversation.id)
 
     # 5. Retrieve relevant products + knowledge
     products_context, knowledge_context = await retrieve_context(
@@ -146,7 +152,6 @@ async def process_customer_message(
     for msg in history:
         role = "user" if msg.role == "customer" else "assistant"
         llm_messages.append({"role": role, "content": msg.content})
-
     # Add image context if present.
     # NOTE: we use ``user_message_for_llm`` (which is the Arabizi→Arabic
     # transliteration when applicable) so the LLM receives clean Arabic
@@ -161,6 +166,21 @@ async def process_customer_message(
             user_content += f"\n\n[العميل بعت صور. تحليل الصور:]\n{vision_text}"
         else:
             user_content += f"\n\n[العميل بعت صور: {', '.join(media_urls[:3])}]"
+
+    # 8.5 Prompt-injection defense (audit A5-H2): the shipped detector was
+    # never invoked — customer text reached the LLM raw. Now:
+    #   - obvious injection attempts are detected, logged and flagged (not
+    #     silently dropped — the merchant can review flagged threads),
+    #   - the whole untrusted turn is delimited so the model treats it as
+    #     data, not instructions.
+    injection_flags = detect_prompt_injection(user_content)
+    if injection_flags[0]:
+        logger.warning(
+            "Prompt-injection patterns in customer message "
+            "(conversation=%s, tenant=%s): %r",
+            conversation.id, tenant.id, injection_flags[1],
+        )
+    user_content = sanitize_user_input(user_content)
 
     llm_messages.append({"role": "user", "content": user_content})
 
@@ -178,6 +198,11 @@ async def process_customer_message(
         llm_ok = bool(raw_response and raw_response.strip())
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
+        raw_response = ""
+
+    # Empty-but-successful reply previously produced a silent customer
+    # (webhook skips empty replies) — audit A5-M4. Same treatment as failure.
+    if not llm_ok:
         raw_response = _get_fallback_response(lang)
 
     # 10. Check for order data in response
@@ -346,9 +371,15 @@ async def _get_or_create_conversation(
 async def _load_conversation_history(
     db: AsyncSession, conversation_id: uuid.UUID
 ) -> list[Message]:
+    # Fallback apologies are excluded from context (audit A5-M8): canned
+    # "مقدرش أرد" replies taught the model it had already refused and
+    # contradicted the prompt's tone rules.
     result = await db.execute(
         select(Message)
-        .where(Message.conversation_id == conversation_id)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.is_fallback.is_not(True),
+        )
         .order_by(Message.created_at.desc())
         .limit(MAX_HISTORY_MESSAGES)
     )
@@ -364,10 +395,28 @@ async def _create_order_from_data(
     conversation: Conversation,
     order_data: dict,
 ) -> bool:
-    """Create an order from extracted AI data. Returns True on success, False on failure."""
+    """Create an order from extracted AI data. Returns True on success, False on failure.
+
+    Hardening (audit A5-H4 / A6-H4):
+    - LIKE wildcards in the LLM-emitted product name are escaped (``%%``
+      previously matched the first product in the catalog).
+    - Items with no catalog match REJECT the order instead of creating
+           zero-priced orders for hallucinated products.
+    - Customer PII is only overwritten when the LLM actually supplied a
+           value — a partial order JSON previously nulled out previously
+      collected phone/address (audit A5-M3).
+    """
     from app.services.order_service import create_order
     from app.services.notification_service import notify_new_order
     from app.models.product import Product
+
+    def _escape_like(value: str) -> str:
+        return (
+            str(value)
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
 
     order_items = order_data.get("items", [])
     items = []
@@ -379,16 +428,24 @@ async def _create_order_from_data(
             select(Product).where(
                 Product.tenant_id == tenant.id,
                 Product.is_active == True,
-                Product.name.ilike(f"%{product_name}%"),
+                Product.name.ilike(f"%{_escape_like(product_name)}%", escape="\\"),
             ).limit(1)
         )
         matching = result.scalar_one_or_none()
 
-        if matching:
-            attrs = matching.attributes or {}
-            unit_price = attrs.get("discount_price") or matching.price
-        else:
-            unit_price = 0
+        if not matching:
+            # Fail-closed (audit A5-H4): an LLM-hallucinated product must
+            # never create a real 0-EGP order. The customer is told to retry
+            # (the agent's reply is overridden by the caller) and the owner
+            # can step in manually.
+            logger.warning(
+                "Order rejected — product %r not in tenant %s catalog",
+                product_name, tenant.id,
+            )
+            return False
+
+        attrs = matching.attributes or {}
+        unit_price = attrs.get("discount_price") or matching.price
 
         items.append({
             # Keep the UUID object — OrderItem.product_id is typed as
@@ -396,7 +453,7 @@ async def _create_order_from_data(
             # expects a real UUID object (it calls ``.hex`` on it).
             # Stringifying here used to work on asyncpg (lenient) but
             # crashes SQLite and other stricter dialects.
-            "product_id": matching.id if matching else None,
+            "product_id": matching.id,
             "product_name": product_name,
             "quantity": quantity,
             "unit_price": unit_price,
@@ -406,13 +463,15 @@ async def _create_order_from_data(
         logger.warning("No items in order data")
         return False
 
-    # Update customer details
-    customer.name = order_data.get("customer_name", customer.name)
-    customer.phone = order_data.get("customer_phone")
-    customer.governorate = order_data.get("governorate")
-    customer.city = order_data.get("city")
-    customer.area = order_data.get("area")
-    customer.address_detail = order_data.get("address_detail")
+    # Update customer details — ONLY when the LLM supplied a value; a
+    # partial order JSON previously nulled previously-collected PII
+    # (audit A5-M3: silent customer data loss).
+    customer.name = order_data.get("customer_name") or customer.name
+    customer.phone = order_data.get("customer_phone") or customer.phone
+    customer.governorate = order_data.get("governorate") or customer.governorate
+    customer.city = order_data.get("city") or customer.city
+    customer.area = order_data.get("area") or customer.area
+    customer.address_detail = order_data.get("address_detail") or customer.address_detail
 
     first_product = None
     if items[0].get("product_id"):
@@ -487,7 +546,7 @@ def _calc_delivery(tenant: Tenant, governorate: str, items: list[dict], product=
         return Decimal("0")
 
     # Cairo/Giza = inside, rest = outside
-    is_cairo = governorate.lower() in ("cairo", "giza", "القاهرة", "الجيزة")
+    is_cairo = (governorate or "").lower() in ("cairo", "giza", "القاهرة", "الجيزة")
     if is_cairo:
         return Decimal(str(tenant.delivery_inside_cairo or 35))
     return Decimal(str(tenant.delivery_outside_cairo or 60))

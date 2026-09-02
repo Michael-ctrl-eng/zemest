@@ -113,53 +113,12 @@ async def safe_http_get(client, url: str, **kwargs) -> Response:
     return await client.get(url, **kwargs)
 
 
-# ============================================================
-# Prompt Injection Detection
-# ============================================================
-
-PROMPT_INJECTION_PATTERNS = [
-    r"ignore\s+(previous|above|all|prior)\s+(instructions?|rules?|prompts?)",
-    r"disregard\s+(previous|above|all|prior)\s+(instructions?|rules?)",
-    r"you\s+are\s+now\s+(a|an)\s+\w+",
-    r"system\s*:\s*",
-    r"<\|im_start\|>",
-    r"\[INSTRUCTIONS\]",
-    r"\[SYSTEM\]",
-    r"reveal\s+(your|the)\s+(system\s+)?prompt",
-    r"what\s+(are|is)\s+your\s+(instructions?|rules?|prompt)",
-    r"jailbreak",
-    r"DAN\s+mode",
-    r"developer\s+mode",
-    r"override\s+(system|instructions|rules)",
-    r"forget\s+(everything|all|previous)",
-    r"act\s+as\s+(if\s+you\s+are\s+)?(a|an)\s+(different|new)",
-    r"sudo\s+",
-    r"admin\s+override",
-]
-
-_compiled_patterns = [re.compile(p, re.IGNORECASE) for p in PROMPT_INJECTION_PATTERNS]
-
-
-def detect_prompt_injection(text: str) -> tuple[bool, list[str]]:
-    """Check if user input contains prompt injection attempts.
-
-    Returns (is_injection, matched_patterns).
-    """
-    if not text:
-        return False, []
-    matches = []
-    for i, pattern in enumerate(_compiled_patterns):
-        if pattern.search(text):
-            matches.append(PROMPT_INJECTION_PATTERNS[i])
-    return len(matches) > 0, matches
-
-
-def sanitize_user_input(text: str) -> str:
-    """Wrap user input to prevent prompt injection.
-
-    Delimits user input so the LLM knows it's untrusted.
-    """
-    return f"[USER INPUT START]\n{text}\n[USER INPUT END]"
+# NOTE (audit A5-H2): a second, divergent copy of `detect_prompt_injection`
+# and `sanitize_user_input` used to live here — nothing imported it (only
+# IPBanMiddleware / SSRF helpers are consumed from this module) while the
+# *tested* implementation lives in `app/middleware/prompt_injection.py`.
+# Two divergent pattern sets guaranteed whichever got wired would behave
+# differently than the tested one; the duplicate was deleted.
 
 
 # ============================================================

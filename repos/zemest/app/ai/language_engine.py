@@ -51,8 +51,10 @@ class LanguageDetection:
 
 ARABIZI_MAP: dict[str, dict[str, str]] = {
     "egyptian": {
-        "3": "ع", "7": "ح", "2": "ء", "5": "خ", "8": "غ",
-        "6": "ط", "9": "ق", "2": "أ", "3'": "غ", "5'": "خ",
+        # NOTE: the dead duplicate key `"2": "ء"` was removed — Python kept
+        # the last literal ("أ") anyway; documenting the effective mapping.
+        "3": "ع", "7": "ح", "2": "أ", "5": "خ", "8": "غ",
+        "6": "ط", "9": "ق", "3'": "غ", "5'": "خ",
         "7'": "خ", "kh": "خ", "gh": "غ", "sh": "ش", "ch": "تش",
         "th": "ث", "aa": "ا", "ee": "ي", "oo": "و",
     },
@@ -86,7 +88,7 @@ ARABIZI_MAP: dict[str, dict[str, str]] = {
 ARABIZI_DIALECT_WORDS: dict[str, list[str]] = {
     "egyptian": ["3ayez", "3ayza", "keda", "mesh", "awy", "3andi", "3andak", "enta", "enti", "ana", "eh", "aiwa", "la2"],
     "gulf": ["abghi", "tabghi", "shlon", "shloun", "yalla", "khallas", "wlla", "3ndi", "tkoon", "weed"],
-    "levantine": ["biddi", "shu", "keef", "3am", "3am", "leh", "shu", "hayda", "haydi", "wen"],
+    "levantine": ["biddi", "shu", "keef", "3am", "leh", "hayda", "haydi", "wen"],
     "maghrebi": ["bghit", "kifash", "wach", "3ndk", "fin", "wash", "mnin"],
     "iraqi": ["arid", "tarid", "shino", "wayn", "leen", "chno"],
 }
@@ -105,16 +107,28 @@ def _count_latin_chars(text: str) -> int:
 
 
 def _has_arabizi_digits(text: str) -> bool:
-    """Check for Arabizi digit substitutions (3, 7, 2, 5, 8, 6, 9)."""
-    return bool(re.search(r"[3782569]", text))
+    """Check for Arabizi digit substitutions (3, 7, 2, 5, 8, 6, 9).
+
+    Hardening (audit A6-H2): a digit must be **adjacent to a Latin letter**
+    to count as Arabizi. Previously any Latin text containing a common
+    digit was misdetected — "size 42 available?" and "order 2 items please"
+    became "arabizi" and were then mangled by transliteration.
+    """
+    return bool(re.search(r"[a-zA-Z][378529]|[378529][a-zA-Z]", text))
 
 
 def _detect_arabizi_dialect(text: str) -> Optional[str]:
-    """Detect which Arabic dialect an Arabizi text uses."""
+    """Detect which Arabic dialect an Arabizi text uses.
+
+    Word-boundary matching (audit A6-L5): previously raw substring ``in``
+    let "ana" match inside "banana"/"canada".
+    """
     text_lower = text.lower()
     scores: dict[str, int] = {}
     for dialect, words in ARABIZI_DIALECT_WORDS.items():
-        score = sum(1 for w in words if w in text_lower)
+        score = sum(
+            1 for w in words if re.search(rf"\b{re.escape(w)}\b", text_lower)
+        )
         if score > 0:
             scores[dialect] = score
     if not scores:
@@ -142,20 +156,67 @@ def _detect_arabic_dialect_by_words(text: str) -> Optional[str]:
     return max(scores, key=scores.get)
 
 
+# Tokens that are purely numeric (prices, sizes, phone numbers, order
+# quantities, Arabic-Indic digits) must NEVER be transliterated — the old
+# whole-string replace turned "el se3r 350" into "el seعر عخ0" and mangled
+# the customer's phone number (audit A6-H1).
+_NUMERIC_TOKEN_RE = re.compile(r"^[0-9٠-٩+\-.,:/()%\s]+$")
+
+
+def _split_tokens(text: str) -> list[tuple[str, str]]:
+    """Split into (token, trailing_separator) pairs. Separators preserved."""
+    parts = re.split(r"(\s+)", text)
+    out: list[tuple[str, str]] = []
+    i = 0
+    while i < len(parts):
+        tok = parts[i]
+        sep = parts[i + 1] if i + 1 < len(parts) else ""
+        if tok:
+            out.append((tok, sep))
+        elif sep and out:
+            # leading whitespace before first token — fold into first pair
+            out[0] = (out[0][0], sep + out[0][1])
+        elif sep:
+            out.append(("", sep))
+        i += 2
+    return out
+
+
 def transliterate_arabizi(text: str, dialect: str = "egyptian") -> str:
     """Transliterate Arabizi (Latin-script Arabic) to Arabic script.
 
-    Uses a rule-based character mapping. For production use, an LLM
-    fallback (Qwen2.5) should handle ambiguous cases.
+    Hardening (audit A6-H1/H2):
+    - **Numeric tokens are never transliterated.** Prices ("350"), sizes
+      ("40"), phone numbers ("01276543210") and quantities survive intact;
+      previously "350" became "عخ0" and phones were destroyed.
+    - Token-by-token replacement with lowercase folding, so "3AYEZ" also
+      transliterates (previously case-sensitive and stayed Latin).
+    - Mixed letter+digit tokens ("3ayez", "se3r") still transliterate —
+      that IS Arabizi.
     """
+    if not text or not isinstance(text, str):
+        return text
+
     mapping = ARABIZI_MAP.get(dialect, ARABIZI_MAP["egyptian"])
-    result = text
+    replacements = sorted(mapping.items(), key=lambda x: -len(x[0]))
 
-    # Replace multi-char sequences first (longest first)
-    for latin, arabic in sorted(mapping.items(), key=lambda x: -len(x[0])):
-        result = result.replace(latin, arabic)
+    out_parts: list[str] = []
+    for token, sep in _split_tokens(text):
+        if not token:
+            out_parts.append(sep)
+            continue
+        if _NUMERIC_TOKEN_RE.match(token):
+            # pure number / punctuation — leave untouched
+            out_parts.append(token + sep)
+            continue
+        lowered = token.lower()
+        result = lowered
+        for latin, arabic in replacements:
+            if latin in result:
+                result = result.replace(latin, arabic)
+        out_parts.append(result + sep)
 
-    return result
+    return "".join(out_parts)
 
 
 def detect_code_switching(text: str) -> list[dict]:
@@ -218,22 +279,24 @@ def detect_language_advanced(text: str) -> LanguageDetection:
 
     is_code_switched = arabic_count > 5 and latin_count > 5
 
-    # Primary language detection
+    # Primary language detection — mixed is evaluated BEFORE arabizi so a
+    # genuinely code-switched Arabic+English sentence is not preempted by a
+    # stray digit (audit A6-H2: the mixed branch was nearly unreachable).
     if arabic_ratio > 0.3:
         primary = "arabic"
         dialect = _detect_arabic_dialect_by_words(text) or "egyptian"
         normalized = None
         confidence = min(0.95, 0.6 + (arabic_ratio * 0.4))
-    elif has_arabizi:
-        primary = "arabizi"
-        dialect = _detect_arabizi_dialect(text)
-        normalized = transliterate_arabizi(text, dialect)
-        confidence = 0.75
     elif is_code_switched:
         primary = "mixed"
         dialect = _detect_arabic_dialect_by_words(text)
         normalized = None
         confidence = 0.8
+    elif has_arabizi:
+        primary = "arabizi"
+        dialect = _detect_arabizi_dialect(text)
+        normalized = transliterate_arabizi(text, dialect)
+        confidence = 0.75
     else:
         primary = "english"
         dialect = None
