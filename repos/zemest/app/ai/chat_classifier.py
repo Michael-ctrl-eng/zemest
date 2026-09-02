@@ -77,9 +77,53 @@ JUNK_LEXICON: dict[str, tuple[str, float]] = {
                   2.0),
 }
 
-# Laughter-only content (whole message is هههه / hhhh / lol spam)
-_LAUGHTER_RE = re.compile(r"^(?:[هh]\s*ه*|[هh]{3,}|هه+|hh+|ههه+|\b(?:lol|lmao|😂+|🤣+)\b[\s😂🤣]*)+$",
-                          re.IGNORECASE)
+# Laughter-only content (whole message is هههه / hhhh / lol spam).
+#
+# SECURITY: the previous pattern
+#   r"^(?:[هh]\s*ه*|[هh]{3,}|هه+|hh+|ههه+|\b(?:lol|lmao|😂+|🤣+)\b[\s😂🤣]*)+$"
+# had catastrophic backtracking (nested quantifiers over a character class):
+# 30+ repetitions of "هه" followed by any non-matching char froze the
+# engine for 30+ SECONDS (audit C1, PoC reproduced). Reachable
+# unauthenticated via the Messenger/IG/WhatsApp webhook on every message
+# through the 45-second silent-trainer cycle.
+#
+# This replacement is pure linear-time tokenization: split the message into
+# whitespace/emoji-separated runs and accept only if EVERY run is laughter.
+# No backtracking is possible — each run is checked once with a simple
+# fullmatch over a flat character class.
+_LAUGHTER_TOKEN_RE = re.compile(r"[هh]+(?:\s+[هh]+)*")           # ه-runs
+_LAUGHTER_ASCII_RE = re.compile(r"(?:ha|he){2,}", re.IGNORECASE)  # haha/hehe
+_LAUGHTER_WORDS_RE = re.compile(r"^(?:lol|lmao|haha|hehe|hihi)$", re.IGNORECASE)
+_LAUGHTER_EMOJI_RE = re.compile(r"[😂🤣]+")
+
+
+def is_laughter_only(text: str) -> bool:
+    """True when the message contains nothing but laughter (ههه / hhhh /
+    lol / 😂 runs, possibly mixed and separated by spaces).
+
+    Linear-time guarantee: the input is tokenized first; each token is
+    matched with fullmatch (no unbounded quantifier nesting). Worst case
+    is O(n) in the message length — immune to the old ReDoS.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    # Split on whitespace AND standalone emoji clusters: laughter messages
+    # freely mix "ههه 😂 😂 هه".
+    tokens = [t for t in re.split(r"\s+", stripped) if t]
+    if not tokens:
+        return False
+    for tok in tokens:
+        if _LAUGHTER_EMOJI_RE.fullmatch(tok):
+            continue  # pure emoji run
+        if _LAUGHTER_WORDS_RE.match(tok):
+            continue  # lol / lmao / haha
+        if _LAUGHTER_TOKEN_RE.fullmatch(tok):
+            continue  # ههه / hhhh run
+        if _LAUGHTER_ASCII_RE.fullmatch(tok):
+            continue  # hahaha
+        return False
+    return True
 
 # Egyptian mobile numbers: 010/011/012/015 + 8 digits (Arabic or Latin digits)
 _PHONE_RE = re.compile(r"(?:\+?2)?01[0125]\d{8}")
@@ -174,7 +218,7 @@ def classify_messages(messages: list[dict]) -> Classification:
             signal_counts[s] = signal_counts.get(s, 0) + 1
 
         stripped = content.strip()
-        if _LAUGHTER_RE.match(stripped):
+        if is_laughter_only(stripped):
             laughter_msgs += 1
             junk_score += 1.5
             signal_counts["laughter_only"] = signal_counts.get("laughter_only", 0) + 1

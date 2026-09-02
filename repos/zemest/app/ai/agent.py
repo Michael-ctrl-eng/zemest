@@ -67,7 +67,11 @@ async def process_customer_message(
         db, tenant.id, sender_psid, customer_name, channel
     )
 
-    # 1.5. Dedup by fb_message_id (Meta retries → same message N times)
+    # 1.5. Dedup by fb_message_id (Meta retries → same message N times).
+    # Fast pre-check kept for the common case; the UNIQUE constraint on
+    # messages.fb_message_id is the actual source of truth — a concurrent
+    # duplicate insert now surfaces as IntegrityError on flush instead of
+    # double-processing (double LLM spend, duplicate orders).
     if fb_message_id:
         existing = await db.execute(
             select(Message).where(Message.fb_message_id == fb_message_id)
@@ -79,7 +83,10 @@ async def process_customer_message(
     # 2. Get or create active conversation
     conversation = await _get_or_create_conversation(db, tenant.id, customer.id, channel)
 
-    # 3. Save customer message
+    # 3. Save customer message. Eagerly flush here so a webhook duplicate
+    # (the unique constraint on messages.fb_message_id) fails NOW — before
+    # the expensive LLM call — instead of at the caller's commit after the
+    # spend already happened.
     customer_msg = Message(
         id=uuid.uuid4(),
         conversation_id=conversation.id,
@@ -90,6 +97,15 @@ async def process_customer_message(
         media_urls=media_urls or [],
     )
     db.add(customer_msg)
+    if fb_message_id:
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            logger.info(f"Duplicate message {fb_message_id} (constraint race) — skipping")
+            return "duplicate"
 
     # 4. Load conversation history
     history = await _load_conversation_history(db, conversation.id)
@@ -142,16 +158,35 @@ async def process_customer_message(
     )
 
     # 8. Build messages for LLM
+    #
+    # Audit A5-H2: the injection detector + input delimiters existed but
+    # were NEVER wired into the live path — customer text went into the
+    # prompt verbatim. Now every user turn is delimited as DATA, and a
+    # strong injection attempt is logged (chat continues, but the attempt
+    # is visible + the turn is marked untrusted in the prompt itself).
+    from app.middleware.prompt_injection import detect_prompt_injection, sanitize_user_input
+
+    is_injection, _matched = detect_prompt_injection(message_text)
+    if is_injection:
+        logger.warning(
+            "Prompt-injection attempt from PSID %s (tenant %s): %.80s",
+            sender_psid, tenant.id, message_text,
+        )
+
     llm_messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
         role = "user" if msg.role == "customer" else "assistant"
-        llm_messages.append({"role": role, "content": msg.content})
+        # History turns are customer-derived too — delimit them the same way.
+        if msg.role == "customer":
+            llm_messages.append({"role": role, "content": sanitize_user_input(msg.content)})
+        else:
+            llm_messages.append({"role": role, "content": msg.content})
 
     # Add image context if present.
     # NOTE: we use ``user_message_for_llm`` (which is the Arabizi→Arabic
     # transliteration when applicable) so the LLM receives clean Arabic
     # script rather than lossy Latin Arabizi.
-    user_content = user_message_for_llm
+    user_content = sanitize_user_input(user_message_for_llm)
     if media_urls:
         if vision_results:
             vision_text = "\n".join(
@@ -375,11 +410,14 @@ async def _create_order_from_data(
         product_name = item["product_name"]
         quantity = item.get("quantity", 1)
 
+        # Audit H4: escape LIKE wildcards — a product_name of "%%" used to
+        # match the FIRST product in the catalog (attacker-steerable pick).
+        escaped = product_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         result = await db.execute(
             select(Product).where(
                 Product.tenant_id == tenant.id,
                 Product.is_active == True,
-                Product.name.ilike(f"%{product_name}%"),
+                Product.name.ilike(f"%{escaped}%", escape="\\"),
             ).limit(1)
         )
         matching = result.scalar_one_or_none()
@@ -388,7 +426,15 @@ async def _create_order_from_data(
             attrs = matching.attributes or {}
             unit_price = attrs.get("discount_price") or matching.price
         else:
-            unit_price = 0
+            # Audit H4: hallucinated/unmatched products must NOT become
+            # zero-priced order lines. The whole order is rejected — the
+            # customer is told the item isn't available (better than a
+            # silent 0-EGP order the merchant must unwind).
+            logger.warning(
+                "Order rejected: product %r not in tenant catalog",
+                product_name,
+            )
+            return False
 
         items.append({
             # Keep the UUID object — OrderItem.product_id is typed as
@@ -396,7 +442,7 @@ async def _create_order_from_data(
             # expects a real UUID object (it calls ``.hex`` on it).
             # Stringifying here used to work on asyncpg (lenient) but
             # crashes SQLite and other stricter dialects.
-            "product_id": matching.id if matching else None,
+            "product_id": matching.id,
             "product_name": product_name,
             "quantity": quantity,
             "unit_price": unit_price,
@@ -406,13 +452,15 @@ async def _create_order_from_data(
         logger.warning("No items in order data")
         return False
 
-    # Update customer details
-    customer.name = order_data.get("customer_name", customer.name)
-    customer.phone = order_data.get("customer_phone")
-    customer.governorate = order_data.get("governorate")
-    customer.city = order_data.get("city")
-    customer.area = order_data.get("area")
-    customer.address_detail = order_data.get("address_detail")
+    # Update customer details — Audit M3: NEVER overwrite collected PII with
+    # None. The LLM frequently emits partial order JSON (items only), which
+    # used to wipe previously-collected phone/governorate/city/address.
+    customer.name = order_data.get("customer_name") or customer.name
+    customer.phone = order_data.get("customer_phone") or customer.phone
+    customer.governorate = order_data.get("governorate") or customer.governorate
+    customer.city = order_data.get("city") or customer.city
+    customer.area = order_data.get("area") or customer.area
+    customer.address_detail = order_data.get("address_detail") or customer.address_detail
 
     first_product = None
     if items[0].get("product_id"):

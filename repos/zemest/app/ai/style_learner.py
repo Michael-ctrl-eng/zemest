@@ -112,18 +112,21 @@ def smart_sample(messages: list[Message], sample_size: int = SAMPLE_SIZE) -> lis
     mid_target = int(sample_size * 0.3)
     old_target = sample_size - recent_target - mid_target
 
-    # Sample from each bucket (random)
-    random.seed(42)  # reproducible
+    # Sample from each bucket. Audit H6: ``random.seed(42)`` re-seeded the
+    # PROCESS-GLOBAL RNG — every concurrently-created order number became
+    # deterministic and predictable. Use a thread-local Random instance
+    # instead (per-call object, global RNG untouched).
+    rng = random.Random()
     sampled = []
-    sampled.extend(random.sample(recent, min(recent_target, len(recent))) if recent else [])
-    sampled.extend(random.sample(mid, min(mid_target, len(mid))) if mid else [])
-    sampled.extend(random.sample(old, min(old_target, len(old))) if old else [])
+    sampled.extend(rng.sample(recent, min(recent_target, len(recent))) if recent else [])
+    sampled.extend(rng.sample(mid, min(mid_target, len(mid))) if mid else [])
+    sampled.extend(rng.sample(old, min(old_target, len(old))) if old else [])
 
     # If we're short (some buckets were empty), top up from the largest bucket
     deficit = sample_size - len(sampled)
     if deficit > 0:
         remaining = [m for m in messages if m not in sampled]
-        sampled.extend(random.sample(remaining, min(deficit, len(remaining))) if remaining else [])
+        sampled.extend(rng.sample(remaining, min(deficit, len(remaining))) if remaining else [])
 
     # Deduplicate near-identical messages (same first 50 chars)
     seen_prefixes: set[str] = set()
