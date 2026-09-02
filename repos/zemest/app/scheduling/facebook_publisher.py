@@ -14,7 +14,7 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-FB_GRAPH_URL = settings.FB_GRAPH_API_URL  # https://graph.facebook.com/v21.0
+FB_GRAPH_URL = settings.FB_GRAPH_API_URL  # re-versioned to v22.0 by graph_client at call time
 
 
 # ============================================================
@@ -43,7 +43,6 @@ async def publish_feed_post(
     url = f"{FB_GRAPH_URL}/{page_id}/feed"
     payload = {
         "message": message,
-        "access_token": page_access_token,
     }
     if link:
         payload["link"] = link
@@ -52,7 +51,11 @@ async def publish_feed_post(
         payload["scheduled_publish_time"] = str(scheduled_publish_time)
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, data=payload)
+        # Bearer header — token never in the request body/URL (audit G5).
+        resp = await client.post(
+            url, data=payload,
+            headers={"Authorization": f"Bearer {page_access_token}"},
+        )
         data = resp.json()
 
     if "error" in data:
@@ -79,14 +82,16 @@ async def publish_photo(
     payload = {
         "url": photo_url,
         "message": caption,
-        "access_token": page_access_token,
     }
     if scheduled_publish_time:
         payload["published"] = "false"
         payload["scheduled_publish_time"] = str(scheduled_publish_time)
 
     async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, data=payload)
+        resp = await client.post(
+            url, data=payload,
+            headers={"Authorization": f"Bearer {page_access_token}"},
+        )
         data = resp.json()
 
     if "error" in data:
@@ -113,11 +118,13 @@ async def publish_video(
         "file_url": video_url,
         "title": title,
         "description": description,
-        "access_token": page_access_token,
     }
 
     async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(url, data=payload)
+        resp = await client.post(
+            url, data=payload,
+            headers={"Authorization": f"Bearer {page_access_token}"},
+        )
         data = resp.json()
 
     if "error" in data:
@@ -154,7 +161,6 @@ async def get_page_insights(
     params = {
         "metric": metric,
         "period": period,
-        "access_token": page_access_token,
     }
     if since:
         params["since"] = since
@@ -162,7 +168,10 @@ async def get_page_insights(
         params["until"] = until
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, params=params)
+        resp = await client.get(
+            url, params=params,
+            headers={"Authorization": f"Bearer {page_access_token}"},
+        )
         data = resp.json()
 
     if "error" in data:
@@ -184,11 +193,13 @@ async def get_page_post_insights(
     url = f"{FB_GRAPH_URL}/{post_id}/insights"
     params = {
         "metric": "post_impressions,post_reach,post_engaged_users,post_reactions_like_total",
-        "access_token": page_access_token,
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, params=params)
+        resp = await client.get(
+            url, params=params,
+            headers={"Authorization": f"Bearer {page_access_token}"},
+        )
         data = resp.json()
 
     if "error" in data:
@@ -206,11 +217,13 @@ async def get_page_info(
     url = f"{FB_GRAPH_URL}/{page_id}"
     params = {
         "fields": "name,followers_count,fan_count,about,website,phone",
-        "access_token": page_access_token,
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, params=params)
+        resp = await client.get(
+            url, params=params,
+            headers={"Authorization": f"Bearer {page_access_token}"},
+        )
         data = resp.json()
 
     if "error" in data:

@@ -308,7 +308,6 @@ async def _process_transaction(db: AsyncSession, obj: dict) -> None:
 @router.post("/intention", response_model=PaymentIntentionResponse)
 async def create_payment_intention(
     req: PaymentIntentionRequest,
-    request: Request,
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -316,9 +315,11 @@ async def create_payment_intention(
 
     Guards: the order must belong to a tenant owned by the authenticated
     user (404 otherwise — no information leak); the deposit cannot exceed
-    the order total. Returns the payment/checkout URL Paymob (or the
-    public key + client_secret) points the buyer at.
+    the order total; an already-paid order can never be reset to pending
+    (409). Returns the payment/checkout URL Paymob (or the public key +
+    client_secret) points the buyer at.
     """
+    settings = get_settings()
     res = await db.execute(
         select(Order)
         .options(selectinload(Order.items))

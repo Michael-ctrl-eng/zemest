@@ -108,3 +108,11 @@ async def get_page_products(page_id: str, page_access_token: str) -> list[dict]:
     except Exception as e:
         logger.error(f"get_page_products error: {e}")
         return []
+
+    catalog_id = catalogs[0]["id"]
+    products = (await graph_get(
+        f"{catalog_id}/products",
+        token=page_access_token,
+        fields="id,name,description,price,image_url,availability",
+    )).get("data", [])
+    return products

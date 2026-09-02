@@ -68,7 +68,11 @@ async def process_customer_message(
         db, tenant.id, sender_psid, customer_name, channel
     )
 
-    # 1.5. Dedup by fb_message_id (Meta retries → same message N times)
+    # 1.5. Dedup by fb_message_id (Meta retries → same message N times).
+    # Fast pre-check kept for the common case; the UNIQUE constraint on
+    # messages.fb_message_id is the actual source of truth — a concurrent
+    # duplicate insert now surfaces as IntegrityError on flush instead of
+    # double-processing (double LLM spend, duplicate orders).
     if fb_message_id:
         existing = await db.execute(
             select(Message).where(Message.fb_message_id == fb_message_id)
@@ -99,6 +103,15 @@ async def process_customer_message(
         media_urls=media_urls or [],
     )
     db.add(customer_msg)
+    if fb_message_id:
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            logger.info(f"Duplicate message {fb_message_id} (constraint race) — skipping")
+            return "duplicate"
 
     # 5. Retrieve relevant products + knowledge
     products_context, knowledge_context = await retrieve_context(
@@ -148,6 +161,21 @@ async def process_customer_message(
     )
 
     # 8. Build messages for LLM
+    #
+    # Audit A5-H2: the injection detector + input delimiters existed but
+    # were NEVER wired into the live path — customer text went into the
+    # prompt verbatim. Now every user turn is delimited as DATA, and a
+    # strong injection attempt is logged (chat continues, but the attempt
+    # is visible + the turn is marked untrusted in the prompt itself).
+    from app.middleware.prompt_injection import detect_prompt_injection, sanitize_user_input
+
+    is_injection, _matched = detect_prompt_injection(message_text)
+    if is_injection:
+        logger.warning(
+            "Prompt-injection attempt from PSID %s (tenant %s): %.80s",
+            sender_psid, tenant.id, message_text,
+        )
+
     llm_messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
         role = "user" if msg.role == "customer" else "assistant"
@@ -156,7 +184,7 @@ async def process_customer_message(
     # NOTE: we use ``user_message_for_llm`` (which is the Arabizi→Arabic
     # transliteration when applicable) so the LLM receives clean Arabic
     # script rather than lossy Latin Arabizi.
-    user_content = user_message_for_llm
+    user_content = sanitize_user_input(user_message_for_llm)
     if media_urls:
         if vision_results:
             vision_text = "\n".join(
@@ -445,6 +473,9 @@ async def _create_order_from_data(
         product_name = item["product_name"]
         quantity = item.get("quantity", 1)
 
+        # Audit H4: escape LIKE wildcards — a product_name of "%%" used to
+        # match the FIRST product in the catalog (attacker-steerable pick).
+        escaped = product_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         result = await db.execute(
             select(Product).where(
                 Product.tenant_id == tenant.id,

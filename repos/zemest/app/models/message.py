@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import ForeignKey, Index, String, Text, JSON
+from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -12,6 +12,14 @@ class Message(Base):
     __tablename__ = "messages"
     __table_args__ = (
         Index("idx_messages_conversation_created", "conversation_id", "created_at"),
+        # Audit M5: webhook dedup was SELECT-then-INSERT (TOCTOU). Meta
+        # redelivers webhook events on timeout; two concurrent deliveries
+        # both passed the existence check → double LLM spend + duplicate
+        # orders. The DB constraint is the source of truth now; the code
+        # path catches IntegrityError as the dedup signal.
+        # (Non-unique for legacy NULL rows: SQLite treats NULLs as distinct,
+        # matching partial-index semantics on Postgres.)
+        UniqueConstraint("fb_message_id", name="uq_messages_fb_message_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

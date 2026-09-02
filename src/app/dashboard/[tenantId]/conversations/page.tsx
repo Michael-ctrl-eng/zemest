@@ -17,9 +17,14 @@ import {
 } from "@/components/site/dash";
 
 function lastMessagePreview(c: Conversation): string | null {
-  if (!c.messages || c.messages.length === 0) return null;
-  const last = c.messages[c.messages.length - 1];
-  return last?.content ?? null;
+  // B8: list responses now carry last_message_preview server-side (no
+  // message threads in the list payload). Detail objects still work.
+  if (c.last_message_preview) return c.last_message_preview;
+  if (c.messages && c.messages.length > 0) {
+    const last = c.messages[c.messages.length - 1];
+    return last?.content ?? null;
+  }
+  return null;
 }
 
 export default function ConversationsPage({ params }: { params: Promise<{ tenantId: string }> }) {

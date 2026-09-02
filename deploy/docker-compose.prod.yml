@@ -1,0 +1,205 @@
+# =============================================================================
+# Zemest — PRODUCTION stack for ~10,000 users (single host, 8 vCPU / 16 GB)
+# =============================================================================
+# Shape:
+#   * postgres:16     — tuned, NO published port (docker network only)
+#   * pgbouncer       — transaction pooling (asyncpg churn under control)
+#   * redis:7         — AOF persistence, LRU eviction, NO published port
+#   * api x2          — uvicorn replicas, scheduler OFF (plain request path)
+#   * scheduler x1    — the ONLY replica with SCHEDULER_ENABLED=true
+#   * worker          — Huey consumer (crawl/notifications)
+#   * caddy           — TLS terminator + load balancer (public entrypoint)
+#
+# Scaling posture (see SCALING.md for the math):
+#   10k users ≈ 70 rps peak ≈ 2 uvicorn replicas × 2 workers each.
+#   Vertical ceiling before reshaping: ~40k users on 8 vCPU.
+#
+# Usage:
+#   cp .env.example .env   # fill EVERYTHING — no secrets below, ever
+#   docker compose -f deploy/docker-compose.prod.yml up -d
+#
+# The dev compose (docker-compose.yml) stays for local work.
+# =============================================================================
+
+x-app-base: &app-base
+  build:
+    context: ..
+    dockerfile: ../Dockerfile
+  env_file: ../.env
+  environment: &app-env
+    APP_ENV: production
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+    DATABASE_URL_SYNC: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+    REDIS_URL: redis://redis:6379/0
+    SCHEDULER_ENABLED: "false"        # only the scheduler service flips this
+    HUEY_INLINE_CONSUMER: "false"     # only the worker service runs huey
+  restart: unless-stopped
+  depends_on: &app-depends
+    db:
+      condition: service_healthy
+    pgbouncer:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  logging: &default-logging
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+
+services:
+  # ------------------------------------------------------------------ database
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    # NO ports: — the database is reachable only inside the compose network.
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
+      -c work_mem=16MB
+      -c maintenance_work_mem=256MB
+      -c max_connections=300
+      -c wal_level=replica
+      -c max_wal_size=2GB
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    logging: *default-logging
+
+  # -------------------------------------------------------------- pooler
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    environment:
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 40
+      RESERVE_POOL_SIZE: 10
+      SERVER_RESET_QUERY: DISCARD ALL
+      AUTH_TYPE: scram-sha-256
+    # NO ports: — apps reach it at pgbouncer:6432 on the compose network.
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+
+  # --------------------------------------------------------------------- cache
+  redis:
+    image: redis:7-alpine
+    # NO ports: — internal only. AOF on (rate-limit counters survive restart),
+    # LRU eviction so a flood of keys can't OOM the box.
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ----------------------------------------------------------------- api x2
+  api:
+    <<: *app-base
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips "*"
+    # NOTE: /docs is DISABLED in production (APP_ENV=production gates it) —
+    # the healthcheck uses the root probe instead.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2g
+
+  # ------------------------------------------------------- scheduler (leader)
+  # Exactly ONE instance: owns the APScheduler cycles (publish 30s,
+  # silent trainer 45s, weekly rebuild). API replicas run with
+  # SCHEDULER_ENABLED=false so jobs fire once — duplicate cycles would
+  # double LLM spend and double-post.
+  scheduler:
+    <<: *app-base
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 1 --proxy-headers
+    environment:
+      <<: *app-env
+      SCHEDULER_ENABLED: "true"
+      SILENT_TRAINER_INLINE_WORKER: "true"
+      SCHEDULER_INLINE_WORKER: "true"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2g
+
+  # --------------------------------------------------------------- huey worker
+  # Crawl + notification queue consumer (durable SQLite queue file is
+  # shared via volume; single consumer = no double-send).
+  worker:
+    <<: *app-base
+    command: python -m app.tasks.worker_main
+    environment:
+      <<: *app-env
+      HUEY_INLINE_CONSUMER: "true"
+    volumes:
+      - huey_data:/app/huey_queue
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 1g
+
+  # --------------------------------------------------------------------- edge
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  redis_data:
+  huey_data:
+  caddy_data:
+  caddy_config:

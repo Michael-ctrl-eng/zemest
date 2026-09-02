@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from app.utils.safe_json import extract_first_json_object
 from app.utils.phone import validate_egyptian_phone
@@ -109,11 +110,35 @@ def validate_order_data(data: dict) -> dict | None:
         if not data.get(field_name):
             logger.warning(f"Missing required order field: {field_name}")
             return None
+    elif isinstance(raw, float):
+        return None  # "2.5 items" is a hallucination, not an order
+    else:
+        return None
+    if not 1 <= qty <= _MAX_QTY:
+        return None
+    return qty
 
-    # Validate phone
-    phone = data["customer_phone"]
-    if not validate_egyptian_phone(phone):
-        logger.warning(f"Invalid Egyptian phone number: {phone}")
+
+def _clean_str(value: Any, max_len: int = 255) -> str:
+    """Coerce to a bounded, stripped string. Non-strings become empty."""
+    if isinstance(value, str):
+        return value.strip()[:max_len]
+    return ""
+
+
+def validate_order_data(data: dict) -> dict | None:
+    """Validate + normalize extracted order data.
+
+    Contract:
+    * Only whitelisted fields survive (no LLM-invented extras).
+    * ``quantity`` is an int in [1, 99] — strings coerced, floats rejected.
+    * ``payment_method`` maps onto the supported set.
+    * Customer PII strings are length-bounded.
+    * PRICE FIELDS ARE INTENTIONALLY DROPPED: prices come from the product
+      catalog at order-creation time (``agent.py``), never from the LLM.
+    * Pure function: never mutates the input dict.
+    """
+    if not isinstance(data, dict):
         return None
 
     clean: dict = {
