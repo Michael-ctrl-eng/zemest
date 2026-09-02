@@ -1,6 +1,6 @@
 """Paymob Intention API client + HMAC-SHA512 webhook verification.
 
-Implements the integration plan from ``analysis/G1-payments.md`` (the
+Implements the integration plan from ``docs/PAYMENTS.md (content folded into the module docstrings)`` (the
 authoritative spec for this integration):
 
 * **Intention API only** — ``POST {base}/v1/intention/`` with

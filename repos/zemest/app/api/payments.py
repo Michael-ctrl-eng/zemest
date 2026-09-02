@@ -1,6 +1,6 @@
 """Paymob payment endpoints — webhook (only state-change source) + intention creation.
 
-Architecture (analysis/G1-payments.md):
+Architecture (docs/PAYMENTS.md (content folded into the module docstrings)):
 
 * COD stays the default payment rail; these endpoints power the
   deposit-to-confirm (عربون) flow and full online payments.

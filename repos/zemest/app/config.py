@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # user interaction; set false when training moves to an external worker)
     SILENT_TRAINER_INLINE_WORKER: bool = True
 
-    # Paymob online payments (Intention API — see analysis/G1-payments.md).
+    # Paymob online payments (Intention API — see docs/PAYMENTS.md (content folded into the module docstrings)).
     # COD stays the default rail; Paymob powers the deposit-to-confirm
     # (عربون) flow and full online payments. All values are env-overridable
     # and empty by default (no real keys in code).
