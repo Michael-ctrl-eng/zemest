@@ -78,13 +78,18 @@ async def e2e_user_and_tenant(client):
     email = f"e2e_{uuid.uuid4().hex[:8]}@test.com"
     password = "TestPass123!"
 
-    # Register
+    # Register (uniform 202, no tokens) then login for the token pair
     resp = await client.post("/api/auth/register", json={
         "name": "E2E Merchant",
         "email": email,
         "password": password,
     })
-    assert resp.status_code == 200, f"Failed to register e2e user: {resp.text}"
+    assert resp.status_code == 202, f"Failed to register e2e user: {resp.text}"
+    resp = await client.post("/api/auth/login", json={
+        "email": email,
+        "password": password,
+    })
+    assert resp.status_code == 200, f"Failed to login e2e user: {resp.text}"
     token = resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 

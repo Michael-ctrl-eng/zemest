@@ -35,6 +35,12 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
+    if user.is_blocked:
+        # Fail closed with 403 — blocked users must not use the API at all.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been blocked",
+        )
     return user
 
 

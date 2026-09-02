@@ -98,11 +98,11 @@ class TestAggressiveScraping:
             )
 
     async def test_concurrent_requests_stay_isolated(
-        self, client, auth_headers, second_auth_headers, test_tenant, second_tenant, test_products
+        self, concurrent_client, auth_headers, second_auth_headers, test_tenant, second_tenant, test_products
     ):
         """Concurrent requests from two tenants should not leak between them."""
         async def fetch_products(headers, tenant_id):
-            resp = await client.get(
+            resp = await concurrent_client.get(
                 f"/api/tenants/{tenant_id}/products?page=1&page_size=100",
                 headers=headers,
             )

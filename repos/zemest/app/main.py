@@ -320,15 +320,20 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
+# Interactive API docs are a production attack-surface gift: the full route
+# map, schemas and parameter names of every endpoint. Gate them to non-
+# production environments (Swagger UI + ReDoc + the OpenAPI spec itself).
+_is_prod_env = settings.APP_ENV.lower() in ("production", "prod")
 app = FastAPI(
     title=settings.APP_NAME,
     description="Zemest — AI agents for moderating Facebook, Instagram, and WhatsApp. "
-    "Two models: Rabbit v1 (Arabic specialist) and Rat v1 (English specialist). "
+    "Two models: Rabbit v1 (Arabic specialist) and Rooster v1 (English specialist). "
     "Understands voice, images, and text. Auto-trained on your chat history.",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None if _is_prod_env else "/docs",
+    redoc_url=None if _is_prod_env else "/redoc",
+    openapi_url=None if _is_prod_env else "/openapi.json",
 )
 
 # --------------------------------------------------------------------------- #

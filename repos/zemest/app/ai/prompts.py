@@ -76,11 +76,11 @@ def get_system_prompt(
 
     # Zemest identity + model name. The Arabic-side persona mentions the
     # Rabbit v1 model (specialist in Arabic across all dialects); the
-    # English persona mentions the Rat v1 model (English specialist).
+    # English persona mentions the Rooster v1 model (English specialist).
     if dialect == "english":
         identity_line = (
             "You are an AI sales agent powered by Zemest, running on the "
-            "Rat v1 model (specialized in English with all accents). "
+            "Rooster v1 model (specialized in English with all accents). "
             "Reply so naturally that the customer cannot tell they are "
             "talking to an AI."
         )

@@ -30,7 +30,7 @@ phone_text = st.text(max_size=20)
 # Strategy: realistic phone-shaped strings — digits + separators.
 phone_realistic = st.builds(
     lambda prefix, digits, sep1, sep2, plus: (
-        (plus if plus else "")
+        ("+" if plus else "")
         + prefix
         + sep1
         + digits

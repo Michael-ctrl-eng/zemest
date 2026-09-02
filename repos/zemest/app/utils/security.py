@@ -24,14 +24,72 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-
 settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# --------------------------------------------------------------------------- #
+# Password hashing — direct bcrypt (passlib removed)
+# --------------------------------------------------------------------------- #
+# passlib 1.7.4 is unmaintained and breaks with bcrypt >= 4.1 (it cannot read
+# the backend version and bcrypt 5.x raises ValueError on >72-byte passwords
+# where passlib expects silent truncation). We call bcrypt directly instead.
+
+#: Cost factor — 12 rounds ≈ 250ms on 2026 commodity hardware: strong enough
+#: for an online service, cheap enough not to DoS the login endpoint.
+BCRYPT_ROUNDS = 12
+
+#: bcrypt only consumes the first 72 bytes of a password. bcrypt 5.x raises
+#: ValueError instead of truncating, so we truncate explicitly (identical to
+#: the historical behaviour every existing hash in the DB was built with).
+_BCRYPT_MAX_BYTES = 72
+
+#: Pre-computed hash used to equalize login timing when the account does not
+#: exist — without this, "unknown email" returns in ~0ms while "known email
+#: + wrong password" takes ~250ms of bcrypt, leaking account existence.
+_DUMMY_BCRYPT_HASH = bcrypt.hashpw(
+    b"zemest-timing-equalizer", bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+).decode("ascii")
+
+
+def hash_password(password: str) -> str:
+    """Hash a password with bcrypt (12 rounds).
+
+    Never raises on long input — deterministic 72-byte truncation, matching
+    the behaviour of every bcrypt hash already stored in the database.
+    """
+    pw = password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+    return bcrypt.hashpw(pw, bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode("ascii")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    """Verify a password against a bcrypt hash.
+
+    Constant-time comparison inside bcrypt; returns ``False`` (never raises)
+    for malformed hashes. Truncates input at 72 bytes exactly like
+    :func:`hash_password` so long passwords verify consistently.
+    """
+    pw = plain.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+    try:
+        return bcrypt.checkpw(pw, hashed.encode("ascii"))
+    except (ValueError, TypeError):
+        return False
+
+
+def burn_password_timing(password: str) -> None:
+    """Equalize timing for non-existent accounts during login/register.
+
+    Runs a full bcrypt verification against a throwaway hash so that a
+    failed "user not found" path costs the same ~250ms as a wrong password.
+    """
+    try:
+        pw = password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+        bcrypt.checkpw(pw, _DUMMY_BCRYPT_HASH.encode("ascii"))
+    except Exception:  # noqa: BLE001 — timing equalizer must never raise
+        pass
 
 # Refresh-token lifetime — kept short-ish so a stolen refresh token has a
 # limited window before mandatory rotation.
@@ -43,17 +101,6 @@ _REVOKE_PREFIX = "jwt:revoked:"
 # In-memory fallback denylist — only used when Redis is unreachable so the
 # revocation still works for the lifetime of the process. Cleared on restart.
 _memory_denylist: set[str] = set()
-
-
-# --------------------------------------------------------------------------- #
-# Password hashing
-# --------------------------------------------------------------------------- #
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
 
 
 # --------------------------------------------------------------------------- #
@@ -273,6 +320,8 @@ def verify_fb_signature(payload: bytes, signature: str) -> bool:
 __all__ = [
     "hash_password",
     "verify_password",
+    "burn_password_timing",
+    "BCRYPT_ROUNDS",
     "create_access_token",
     "decode_token",
     "create_refresh_token",

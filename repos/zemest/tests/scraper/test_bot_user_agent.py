@@ -71,12 +71,22 @@ class TestBotUserAgent:
     async def test_public_endpoints_respond_to_bots(
         self, client, ua
     ):
-        """Public endpoints (login page, docs) should respond to all UAs."""
+        """Public endpoints (health probe, docs) should respond to all UAs.
+
+        The FastAPI app's public surface is the health probe at ``/`` and
+        the docs in non-production; the login *page* lives on the Next.js
+        frontend, not the backend.
+        """
         headers = {"User-Agent": ua}
-        # Public dashboard page
-        resp = await client.get("/dashboard/login", headers=headers)
+        # Public health probe
+        resp = await client.get("/", headers=headers)
         assert resp.status_code == 200, (
-            f"Login page returned {resp.status_code} for UA: {ua!r}"
+            f"Health probe returned {resp.status_code} for UA: {ua!r}"
+        )
+        # Docs are public in development/test (gated to non-prod envs)
+        resp = await client.get("/docs", headers=headers, follow_redirects=True)
+        assert resp.status_code == 200, (
+            f"Docs returned {resp.status_code} for UA: {ua!r}"
         )
 
     @pytest.mark.parametrize("ua", BOT_USER_AGENTS)

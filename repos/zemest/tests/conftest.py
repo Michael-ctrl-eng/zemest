@@ -227,3 +227,69 @@ async def test_conversation(db_session, test_tenant, test_customer):
         db_session.add(m)
     await db_session.commit()
     return conv
+
+
+# --------------------------------------------------------------------------- #
+# Cross-tenant fixtures — second user + tenant for isolation tests
+# --------------------------------------------------------------------------- #
+@pytest_asyncio.fixture
+async def second_user(db_session):
+    """A second, unrelated user (no tenants in common with test_user)."""
+    from app.utils.security import hash_password
+
+    user = User(
+        id=uuid.uuid4(),
+        name="Second User",
+        email="second@example.com",
+        hashed_password=hash_password("secondpass123"),
+    )
+    db_session.add(user)
+    await db_session.commit()
+    return user
+
+
+@pytest_asyncio.fixture
+async def second_auth_headers(second_user):
+    token = create_access_token({"sub": str(second_user.id)})
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def second_tenant(db_session, second_user):
+    """A tenant owned by the SECOND user (isolation counterpart)."""
+    tenant = Tenant(
+        id=uuid.uuid4(),
+        owner_id=second_user.id,
+        page_name="Second Store",
+        fb_page_id="second_page_456",
+        website_url="https://secondstore.com",
+        business_email="owner@secondstore.com",
+        business_phone="01098765432",
+        notification_pref="email",
+    )
+    db_session.add(tenant)
+    await db_session.commit()
+    return tenant
+
+
+@pytest_asyncio.fixture
+async def concurrent_client(db_session):
+    """HTTP client whose override creates a FRESH session per request.
+
+    The plain `client` fixture yields one shared session across all requests
+    — fine for sequential tests, but concurrent requests on a single
+    AsyncSession raise IllegalStateChangeError (a session is not safe for
+    concurrent use). This fixture maps each request to its own session from
+    the same engine, mirroring production per-request sessions.
+    """
+    from app.database import get_db
+
+    async def override_get_db_per_request():
+        async with TestSessionLocal() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db_per_request
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+    app.dependency_overrides.clear()

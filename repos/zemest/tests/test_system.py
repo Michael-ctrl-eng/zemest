@@ -15,9 +15,14 @@ class TestSystemFlow:
 
     async def test_full_onboarding_flow(self, client):
         """Test: register -> create tenant -> add products -> verify."""
-        # 1. Register
+        # 1. Register (anti-enumeration: uniform 202, no tokens) then login
         resp = await client.post("/api/auth/register", json={
             "name": "Shopkeeper Ahmed",
+            "email": "ahmed@shop.com",
+            "password": "secure123",
+        })
+        assert resp.status_code == 202
+        resp = await client.post("/api/auth/login", json={
             "email": "ahmed@shop.com",
             "password": "secure123",
         })
@@ -128,16 +133,22 @@ class TestSystemFlow:
         # a@test.com registered in the shared test.db)
         suffix = uuid.uuid4().hex[:8]
         resp1 = await client.post("/api/auth/register", json={
-            "name": "User A", "email": f"a-{suffix}@test.com", "password": "pass",
+            "name": "User A", "email": f"a-{suffix}@test.com", "password": "password123",
         })
-        assert resp1.status_code == 200, resp1.text
+        assert resp1.status_code == 202, resp1.text
+        resp1 = await client.post("/api/auth/login", json={
+            "email": f"a-{suffix}@test.com", "password": "password123",
+        })
         token_a = resp1.json()["access_token"]
         headers_a = {"Authorization": f"Bearer {token_a}", "Content-Type": "application/json"}
 
         resp2 = await client.post("/api/auth/register", json={
-            "name": "User B", "email": f"b-{suffix}@test.com", "password": "pass",
+            "name": "User B", "email": f"b-{suffix}@test.com", "password": "password123",
         })
-        assert resp2.status_code == 200, resp2.text
+        assert resp2.status_code == 202, resp2.text
+        resp2 = await client.post("/api/auth/login", json={
+            "email": f"b-{suffix}@test.com", "password": "password123",
+        })
         token_b = resp2.json()["access_token"]
         headers_b = {"Authorization": f"Bearer {token_b}", "Content-Type": "application/json"}
 

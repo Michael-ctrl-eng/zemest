@@ -28,7 +28,11 @@ class Settings(BaseSettings):
     # JWT
     JWT_SECRET_KEY: str = "change-me-to-a-random-secret-key"
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    # Short-lived access tokens (30 min). Long sessions are sustained by
+    # refresh-token rotation on /api/auth/refresh — a stolen access token
+    # is only useful for half an hour, and a stolen REFRESH token is
+    # detected on reuse (all sessions revoked).
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # OpenRouter (free models)
     OPENROUTER_API_KEY: str = ""

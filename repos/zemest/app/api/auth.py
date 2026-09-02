@@ -1,11 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import asyncio
+
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.schemas.auth import (
     FacebookLoginRequest,
     LoginRequest,
+    LogoutRequest,
+    RefreshRequest,
+    RegisterAckResponse,
     RegisterRequest,
     TokenResponse,
     UserResponse,
@@ -25,34 +30,83 @@ except Exception:  # pragma: no cover — soft dependency
     _limiter = None
 
 
-@router.post("/register", response_model=TokenResponse)
+@router.post("/register", response_model=RegisterAckResponse, status_code=202)
 @_limiter.limit("3/minute")
 async def register(request: Request, req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    """Register a new account.
+
+    Anti-enumeration: returns the same 202 + body whether the account was
+    created or the email is already taken. Account existence must not be
+    discoverable from status code, body, or response timing (the duplicate
+    path burns an equal-cost bcrypt hash).
+    """
     try:
-        user = await auth_service.register_user(db, req.name, req.email, req.password)
-        token = await auth_service.login_user(db, req.email, req.password)
-        return TokenResponse(access_token=token)
+        await auth_service.register_user(db, req.name, req.email, req.password)
+        await db.commit()
+    except auth_service.EmailAlreadyRegistered:
+        # Burn the same bcrypt cost a genuine registration just paid so the
+        # response timing does not leak which path executed.
+        from app.utils.security import burn_password_timing
+
+        await asyncio.to_thread(burn_password_timing, req.password)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return RegisterAckResponse()
 
 
 @router.post("/login", response_model=TokenResponse)
 @_limiter.limit("5/minute")
 async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
-        token = await auth_service.login_user(db, req.email, req.password)
-        return TokenResponse(access_token=token)
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        pair = await auth_service.login_user(db, req.email, req.password)
+        await db.commit()
+        return TokenResponse(**pair)
+    except auth_service.AuthError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
 
 
 @router.post("/facebook", response_model=TokenResponse)
 async def facebook_login(req: FacebookLoginRequest, db: AsyncSession = Depends(get_db)):
     try:
-        token = await auth_service.login_with_facebook(db, req.fb_access_token)
-        return TokenResponse(access_token=token)
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        pair = await auth_service.login_with_facebook(db, req.fb_access_token)
+        await db.commit()
+        return TokenResponse(**pair)
+    except auth_service.AuthError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Rotate a refresh token.
+
+    Single-use: each refresh token is exchanged exactly once. Presenting a
+    token that was already consumed revokes every session for the account
+    (reuse = theft signal per OAuth 2.0 Security BCP).
+    """
+    try:
+        pair = await auth_service.rotate_refresh_token(db, req.refresh_token)
+        await db.commit()
+        return TokenResponse(**pair)
+    except auth_service.AuthError as e:
+        # Reuse detection stages revocations BEFORE raising — those writes
+        # must SURVIVE the error path (rollback here would un-revoke the
+        # stolen-token family, re-opening the replay window).
+        try:
+            await db.commit()
+        except Exception:  # noqa: BLE001 — nothing staged on plain 401
+            await db.rollback()
+        raise HTTPException(status_code=e.status, detail=e.message)
+
+
+@router.post("/logout", status_code=204)
+async def logout(
+    req: LogoutRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Revoke one refresh token (idempotent, always 204)."""
+    await auth_service.revoke_refresh_token(db, req.refresh_token)
+    await db.commit()
 
 
 @router.get("/me", response_model=UserResponse)

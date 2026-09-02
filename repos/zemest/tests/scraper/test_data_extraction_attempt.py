@@ -178,7 +178,7 @@ class TestDataExtractionAttempt:
         )
 
     async def test_huge_page_number_returns_empty(
-        self, client, auth_headers, test_tenant
+        self, client, auth_headers, test_tenant, test_products
     ):
         """page=999999 should return empty list (not crash, not return all)."""
         resp = await client.get(
