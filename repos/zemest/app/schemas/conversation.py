@@ -24,6 +24,26 @@ class ConversationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ConversationSummaryResponse(BaseModel):
+    """List item — deliberately message-free.
+
+    Audit B8: the list response used to embed every conversation's full
+    message thread; the dashboard polls the list every 10s, so the payload
+    grew with chat history. ``last_message_preview`` + ``message_count``
+    give the list UI everything it renders.
+    """
+
+    id: str
+    customer_name: str | None = None
+    status: str
+    started_at: datetime
+    last_message_at: datetime
+    last_message_preview: str = ""
+    message_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
 class ConversationListResponse(BaseModel):
-    conversations: list[ConversationResponse]
+    conversations: list[ConversationSummaryResponse]
     total: int

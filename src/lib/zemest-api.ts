@@ -231,7 +231,11 @@ export interface Conversation {
   status: string;
   started_at: string;
   last_message_at: string;
-  messages: ConversationMessage[];
+  /** List responses are message-free (B8): these carry the summary. */
+  last_message_preview?: string;
+  message_count?: number;
+  /** Detail responses only. */
+  messages?: ConversationMessage[];
 }
 
 export interface CrawlJob {
@@ -348,6 +352,15 @@ export const chatApi = {
     api.post<{ reply: string; conversation_id: string; customer_id: string; tokens_used: number }>(
       "/test/chat",
       { tenant_id: tenantId, message, customer_name: customerName }
+    ),
+  /** Owner-mode chat: the merchant talks to the OWNER-side agent
+   *  (postiz/scheduling actions), not the customer-side flow. The old
+   *  UI posted owner-mode messages to /test/chat — silently creating
+   *  fake customer conversations (audit B6). */
+  sendOwner: (tenantId: string, message: string) =>
+    api.post<{ reply: string; action: string; data: Record<string, unknown> }>(
+      "/test/postiz-chat",
+      { tenant_id: tenantId, message }
     ),
 };
 
