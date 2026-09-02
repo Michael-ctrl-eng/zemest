@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # LLM provider selection: auto | openrouter | gemini | ollama
     LLM_PROVIDER: str = "auto"
 
+    # At-rest encryption key for channel tokens (Fernet). Empty → derived
+    # from JWT_SECRET_KEY via SHA-256 (zero-config still encrypted).
+    # Rotate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    TOKEN_ENCRYPTION_KEY: str = ""
+
     # Facebook
     FB_APP_ID: str = ""
     FB_APP_SECRET: str = ""

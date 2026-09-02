@@ -3,10 +3,11 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import ForeignKey, String, Text, Boolean, Numeric, JSON
+from sqlalchemy import ForeignKey, String, Boolean, Numeric, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+from app.db_types import EncryptedText
 
 
 class Tenant(Base):
@@ -17,7 +18,9 @@ class Tenant(Base):
     # --- Page connections (multi-channel per page) ---
     fb_page_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True)
     page_name: Mapped[str] = mapped_column(String(255))
-    page_access_token: Mapped[Optional[str]] = mapped_column(Text)
+    # At-rest encrypted (audit A4-H4): non-expiring Page tokens granting
+    # messaging + posting control — any DB read used to yield them verbatim.
+    page_access_token: Mapped[Optional[str]] = mapped_column(EncryptedText())
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
     # Page owner's own Messenger PSID — messages from this sender bypass the
@@ -26,11 +29,11 @@ class Tenant(Base):
 
     # Instagram
     ig_user_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
-    ig_access_token: Mapped[Optional[str]] = mapped_column(Text)
+    ig_access_token: Mapped[Optional[str]] = mapped_column(EncryptedText())
 
     # WhatsApp (via WhatsApp Business API or WAHA)
     wa_phone_number_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
-    wa_access_token: Mapped[Optional[str]] = mapped_column(Text)
+    wa_access_token: Mapped[Optional[str]] = mapped_column(EncryptedText())
     wa_waba_id: Mapped[Optional[str]] = mapped_column(String(64))
 
     # --- Channel connection metadata (account display info + connect time) ---
@@ -42,7 +45,7 @@ class Tenant(Base):
     # previous design shared ONE process-wide Postiz session across every
     # tenant — any tenant's login hijacked everyone's scheduling) ---
     postiz_email: Mapped[Optional[str]] = mapped_column(String(255))
-    postiz_token: Mapped[Optional[str]] = mapped_column(Text)
+    postiz_token: Mapped[Optional[str]] = mapped_column(EncryptedText())
 
     # --- Calendar subscription (ICS feed auth token) ---
     calendar_token: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True)
