@@ -205,9 +205,42 @@ async def _process_transaction(db: AsyncSession, obj: dict) -> None:
         logger.info("Paymob transaction %s pending — no state change", tx_id)
         return
     if obj.get("is_refunded") or obj.get("is_voided"):
-        # Refunds/voids map onto the manual returns handling (G1 §4) — log only.
-        logger.info(
-            "Paymob transaction %s is a refund/void — no automatic state change", tx_id
+        # Audit M2: refunds/voids were log-only — the merchant never saw a
+        # state change. Now they transition the order explicitly.
+        target = "refunded" if obj.get("is_refunded") else "voided"
+        res = await db.execute(
+            update(Order)
+            .where(
+                Order.id == order_uuid,
+                Order.paymob_transaction_id == tx_id,
+                Order.payment_status.in_(["paid", "deposit_paid"]),
+            )
+            .values(payment_status=target)
+        )
+        await db.commit()
+        if res.rowcount:
+            logger.info(
+                "Paymob webhook: order %s payment_status → %s (tx %s)",
+                order_uuid, target, tx_id,
+            )
+            # TODO(G1): enqueue merchant notification for refund/void.
+        else:
+            logger.info(
+                "Paymob webhook: refund/void for order %s (tx %s) — no "
+                "transition (unknown tx or already terminal)",
+                order_uuid, tx_id,
+            )
+        return
+
+    # Audit M2: currency gate — a transaction in a non-EGP currency was
+    # compared against piasters as-is, misclassifying paid/deposit state.
+    tx_currency = str(obj.get("currency") or "").upper()
+    expected_currency = (get_settings().PAYMOB_CURRENCY or "EGP").upper()
+    if tx_currency and tx_currency != expected_currency:
+        logger.warning(
+            "Paymob webhook: order %s tx %s currency %r ≠ %r — flagged for "
+            "manual reconciliation, no state change",
+            order_uuid, tx_id, tx_currency, expected_currency,
         )
         return
 
@@ -269,7 +302,6 @@ async def _process_transaction(db: AsyncSession, obj: dict) -> None:
 @router.post("/intention", response_model=PaymentIntentionResponse)
 async def create_payment_intention(
     req: PaymentIntentionRequest,
-    request: Request,
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -277,9 +309,11 @@ async def create_payment_intention(
 
     Guards: the order must belong to a tenant owned by the authenticated
     user (404 otherwise — no information leak); the deposit cannot exceed
-    the order total. Returns the payment/checkout URL Paymob (or the
-    public key + client_secret) points the buyer at.
+    the order total; an already-paid order can never be reset to pending
+    (409). Returns the payment/checkout URL Paymob (or the public key +
+    client_secret) points the buyer at.
     """
+    settings = get_settings()
     res = await db.execute(
         select(Order)
         .options(selectinload(Order.items))
@@ -294,11 +328,30 @@ async def create_payment_intention(
             status_code=400, detail="deposit amount cannot exceed the order total"
         )
 
-    # Public webhook URL Paymob calls back (state changes happen only there).
-    # request.base_url respects the Host header; behind a proxy/BFF set the
-    # public backend origin on the proxy (X-Forwarded-Host etc.) or override
-    # notification_url at the client level.
-    notification_url = f"{str(request.base_url).rstrip('/')}/api/payments/webhook"
+    # Audit F4 / D5-P0: intention state guard — an order already paid or
+    # deposit-settled must NEVER be reset to pending_deposit. The old code
+    # overwrote payment_status unconditionally: a retry of this endpoint
+    # after payment downgraded paid orders back to pending.
+    if order.payment_status in ("paid", "deposit_paid"):
+        raise HTTPException(
+            status_code=409,
+            detail="order is already paid — intention cannot be re-created",
+        )
+
+    # Audit M11: the notification_url used to derive from the request Host
+    # header — a proxy forwarding attacker-controlled Host registered a
+    # webhook pointing at the attacker's server. Pin to the configured
+    # public origin (explicit, operator-controlled) and REFUSE to create
+    # intentions when it isn't set instead of silently trusting the header.
+    public_origin = (settings.PUBLIC_BASE_URL or "").rstrip("/")
+    if not public_origin:
+        raise HTTPException(
+            status_code=400,
+            detail="PUBLIC_BASE_URL is not configured — cannot create a "
+            "payment intention (refusing to derive webhook URL from the "
+            "request Host header)",
+        )
+    notification_url = f"{public_origin}/api/payments/webhook"
 
     name_parts = (order.customer_name or "Customer").split(" ", 1)
     billing_data = {

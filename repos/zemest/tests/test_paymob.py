@@ -153,43 +153,10 @@ def paymob_settings(monkeypatch):
     monkeypatch.setattr(s, "PAYMOB_API_KEY", TEST_API_KEY)
     monkeypatch.setattr(s, "PAYMOB_INTEGRATION_IDS", TEST_INTEGRATION_IDS)
     monkeypatch.setattr(s, "PAYMOB_WEBHOOK_HMAC_SECRET", TEST_SECRET)
+    # F4: notification URLs are pinned to the configured public origin —
+    # never derived from the request Host header.
+    monkeypatch.setattr(s, "PUBLIC_BASE_URL", "https://public.zemest.test")
     return s
-
-
-@pytest_asyncio.fixture
-async def test_order(db_session, test_tenant, test_customer):
-    """A COD order awaiting a deposit link (mirrors tests/test_orders.py)."""
-    order = Order(
-        id=uuid.uuid4(),
-        tenant_id=test_tenant.id,
-        customer_id=test_customer.id,
-        order_number="ORD-260317-001",
-        customer_name="Ahmed",
-        customer_phone="01012345678",
-        governorate="cairo",
-        city="Cairo",
-        area="Maadi",
-        address_detail="15 Road 9, Maadi, Cairo",
-        payment_method="cod",
-        subtotal=Decimal("1200.00"),
-        delivery_charge=Decimal("60.00"),
-        total=Decimal("1260.00"),
-        status="pending",
-    )
-    db_session.add(order)
-    await db_session.flush()
-
-    item = OrderItem(
-        id=uuid.uuid4(),
-        order_id=order.id,
-        product_name="Cotton Galabiya",
-        quantity=1,
-        unit_price=Decimal("1200.00"),
-        total_price=Decimal("1200.00"),
-    )
-    db_session.add(item)
-    await db_session.commit()
-    return order
 
 
 # ---------------------------------------------------------------------------
