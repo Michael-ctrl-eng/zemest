@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     HUEY_ENABLED: bool = True
     HUEY_INLINE_CONSUMER: bool = True
     HUEY_SQLITE_PATH: str = "huey_queue.db"
+    # Multi-service deployments (docker-compose.prod.yml): the dedicated
+    # worker container owns the consumer. API replicas set this True so
+    # call sites ENQUEUE (durable, exactly-once) instead of checking for a
+    # local consumer and falling back to inline execution on the API loop.
+    # Requires HUEY_SQLITE_PATH to point at a file ALL services share
+    # (same docker volume). No effect in single-process mode.
+    HUEY_EXTERNAL_WORKER: bool = False
 
     # Periodic publish job (APScheduler; publishes due posts inside uvicorn).
     # Set false when an external `huey_consumer`/beat-style deployment owns it.

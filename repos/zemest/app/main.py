@@ -32,10 +32,94 @@ async def lifespan(app: FastAPI):
             "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\" "
             "and set it in the environment before starting the server."
         )
-    # Startup — auto-create missing tables
+    # Startup — schema bootstrap, then idempotent patches
     import logging as _mlog
     from sqlalchemy import text
     from app.database import engine
+
+    # --- Base tables first: metadata.create_all ----------------------------
+    # Production Docker has no bootstrap_local.py step; without this the
+    # patcher below ALTERs tables that don't exist (every statement silently
+    # swallowed → the app boots with an EMPTY schema while / stays "ok").
+    # create_all is checkfirst=True (idempotent); the Postgres advisory lock
+    # serializes replicas booting simultaneously (SQLite/dev: lock no-ops,
+    # single-process is safe anyway).
+    try:
+        import app.models  # noqa: F401 — full model registry for metadata
+        from app.database import Base, async_session as _boot_session_factory
+        from app.services.leader_election import try_job_lock, release_job_lock
+
+        _boot_db = _boot_session_factory()
+        try:
+            if await try_job_lock(_boot_db, "schema-bootstrap"):
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                _mlog.getLogger("app.main").info(
+                    "Schema bootstrap: create_all complete (idempotent)")
+            await release_job_lock(_boot_db, "schema-bootstrap")
+        finally:
+            await _boot_db.close()
+    except Exception:
+        _mlog.getLogger("app.main").error("Schema create_all failed", exc_info=True)
+
+    # --- Column patches: each statement in its OWN transaction --------------
+    # One big transaction poisons itself on Postgres: the first
+    # duplicate-column error aborts it and every later ALTER/index silently
+    # no-ops (audit C5 hazard). Isolated transactions make every patch
+    # independent; "duplicate column" is the expected idempotent skip.
+    for _tbl, _col, _ctype in (
+        ("orders", "payment_phone_last2", "VARCHAR(10)"),
+        ("orders", "payment_trx_id", "VARCHAR(50)"),
+        ("tenants", "delivery_inside_cairo", "NUMERIC(10,2) DEFAULT 35"),
+        ("tenants", "delivery_outside_cairo", "NUMERIC(10,2) DEFAULT 60"),
+        ("tenants", "free_delivery_above", "NUMERIC(10,2)"),
+        ("tenants", "payment_methods", "JSONB"),
+        ("tenants", "order_api_config", "JSONB"),
+        ("tenants", "style_profile", "JSONB"),
+        ("tenants", "knowledge_base", "JSONB"),
+        ("tenants", "knowledge_built_at", "TIMESTAMP"),
+        ("tenants", "ig_user_id", "VARCHAR(64)"),
+        ("tenants", "ig_access_token", "TEXT"),
+        ("tenants", "wa_phone_number_id", "VARCHAR(64)"),
+        ("tenants", "wa_access_token", "TEXT"),
+        ("tenants", "wa_waba_id", "VARCHAR(64)"),
+        ("tenants", "owner_psid", "VARCHAR(64)"),
+        ("tenants", "messenger_meta", "JSON"),
+        ("tenants", "instagram_meta", "JSON"),
+        ("tenants", "whatsapp_meta", "JSON"),
+        ("tenants", "calendar_token", "VARCHAR(64)"),
+        ("tenants", "training_state", "JSON"),
+        ("conversations", "classification", "VARCHAR(20)"),
+        ("conversations", "classification_score", "FLOAT"),
+        ("conversations", "classification_signals", "JSON"),
+        ("conversations", "classified_at", "TIMESTAMP"),
+        ("conversations", "classified_by", "VARCHAR(16)"),
+        ("customers", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
+        ("customers", "governorate", "VARCHAR(100)"),
+        ("customers", "city", "VARCHAR(100)"),
+        ("customers", "area", "VARCHAR(100)"),
+        ("customers", "address_detail", "TEXT"),
+        ("messages", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
+        ("messages", "media_urls", "JSON"),
+        ("messages", "is_fallback", "BOOLEAN DEFAULT 0"),
+        ("orders", "api_status", "VARCHAR(20)"),
+        ("orders", "api_response", "TEXT"),
+        ("orders", "api_status_code", "INTEGER"),
+        ("orders", "api_called_at", "TIMESTAMP"),
+        ("orders", "api_external_id", "VARCHAR(100)"),
+        ("users", "is_superadmin", "BOOLEAN DEFAULT FALSE"),
+        ("orders", "payment_status", "VARCHAR(30)"),
+        ("orders", "deposit_amount", "NUMERIC(12,2)"),
+        ("orders", "paymob_intention_id", "VARCHAR(100)"),
+        ("orders", "paymob_transaction_id", "VARCHAR(64)"),
+    ):
+        try:
+            async with engine.begin() as _conn:
+                await _conn.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_ctype}"))
+        except Exception:
+            _mlog.getLogger("app.main").debug(
+                "column patch skipped (likely exists): %s.%s", _tbl, _col)
+
     try:
         async with engine.begin() as conn:
             await conn.execute(text("""
@@ -51,60 +135,6 @@ async def lifespan(app: FastAPI):
                 )
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_token_usage_tenant ON token_usage(tenant_id)"))
-            # Add missing columns (idempotent)
-            migrations = [
-                ("orders", "payment_phone_last2", "VARCHAR(10)"),
-                ("orders", "payment_trx_id", "VARCHAR(50)"),
-                ("tenants", "delivery_inside_cairo", "NUMERIC(10,2) DEFAULT 35"),
-                ("tenants", "delivery_outside_cairo", "NUMERIC(10,2) DEFAULT 60"),
-                ("tenants", "free_delivery_above", "NUMERIC(10,2)"),
-                ("tenants", "payment_methods", "JSONB"),
-                ("tenants", "order_api_config", "JSONB"),
-                ("tenants", "style_profile", "JSONB"),
-                ("tenants", "knowledge_base", "JSONB"),
-                ("tenants", "knowledge_built_at", "TIMESTAMP"),
-                ("tenants", "ig_user_id", "VARCHAR(64)"),
-                ("tenants", "ig_access_token", "TEXT"),
-                ("tenants", "wa_phone_number_id", "VARCHAR(64)"),
-                ("tenants", "wa_access_token", "TEXT"),
-                ("tenants", "wa_waba_id", "VARCHAR(64)"),
-                ("tenants", "owner_psid", "VARCHAR(64)"),
-                ("tenants", "messenger_meta", "JSON"),
-                ("tenants", "instagram_meta", "JSON"),
-                ("tenants", "whatsapp_meta", "JSON"),
-                ("tenants", "calendar_token", "VARCHAR(64)"),
-                ("tenants", "training_state", "JSON"),
-                ("conversations", "classification", "VARCHAR(20)"),
-                ("conversations", "classification_score", "FLOAT"),
-                ("conversations", "classification_signals", "JSON"),
-                ("conversations", "classified_at", "TIMESTAMP"),
-                ("conversations", "classified_by", "VARCHAR(16)"),
-                ("customers", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
-                ("customers", "governorate", "VARCHAR(100)"),
-                ("customers", "city", "VARCHAR(100)"),
-                ("customers", "area", "VARCHAR(100)"),
-                ("customers", "address_detail", "TEXT"),
-                ("messages", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
-                ("messages", "media_urls", "JSON"),
-                ("messages", "is_fallback", "BOOLEAN DEFAULT 0"),
-                ("orders", "api_status", "VARCHAR(20)"),
-                ("orders", "api_response", "TEXT"),
-                ("orders", "api_status_code", "INTEGER"),
-                ("orders", "api_called_at", "TIMESTAMP"),
-                ("orders", "api_external_id", "VARCHAR(100)"),
-                # --- Admin / security tables (idempotent) ---
-                ("users", "is_superadmin", "BOOLEAN DEFAULT FALSE"),
-                # --- Paymob online payments (deposit-to-confirm flow) ---
-                ("orders", "payment_status", "VARCHAR(30)"),
-                ("orders", "deposit_amount", "NUMERIC(12,2)"),
-                ("orders", "paymob_intention_id", "VARCHAR(100)"),
-                ("orders", "paymob_transaction_id", "VARCHAR(64)"),
-            ]
-            for table, col, coltype in migrations:
-                try:
-                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}"))
-                except Exception:
-                    pass
 
             # --- SQLite hardening: WAL + busy timeout -----------------------
             # WAL lets the silent trainer / inline scheduler commit while
@@ -226,6 +256,51 @@ async def lifespan(app: FastAPI):
     except Exception:
         # DB may not be ready yet — but never SILENTLY: the operator must see it
         _mlog.getLogger("app.main").error("Startup migration block failed", exc_info=True)
+
+    # --- First superadmin provisioning (production bootstrap) ---------------
+    # Production deployments have no bootstrap_local.py (that script seeds
+    # DEMO accounts with printed passwords — fine for dev, never for prod).
+    # Set ADMIN_EMAIL + ADMIN_PASSWORD in the environment: on boot, IF no
+    # superadmin exists yet, this creates exactly one. It never overwrites,
+    # never promotes an existing non-admin account, and no-ops when unset.
+    try:
+        import os as _os
+        import uuid as _uuid
+        from sqlalchemy import select as _select
+        from app.database import async_session as _admin_session_factory
+        from app.models.user import User
+        from app.utils.security import hash_password
+
+        _admin_email = _os.environ.get("ADMIN_EMAIL", "").strip().lower()
+        _admin_password = _os.environ.get("ADMIN_PASSWORD", "")
+        if _admin_email and _admin_password:
+            async with _admin_session_factory() as _session:
+                _any_admin = (await _session.execute(
+                    _select(User).where(User.is_superadmin.is_(True)).limit(1)
+                )).first()
+                if _any_admin is None:
+                    _existing = (await _session.execute(
+                        _select(User).where(User.email == _admin_email)
+                    )).scalar_one_or_none()
+                    if _existing is not None:
+                        _mlog.getLogger("app.main").warning(
+                            "ADMIN_EMAIL %s exists but is not superadmin — NOT "
+                            "promoting automatically; resolve manually", _admin_email)
+                    else:
+                        _session.add(User(
+                            id=_uuid.uuid4(),
+                            email=_admin_email,
+                            hashed_password=hash_password(_admin_password),
+                            name="Platform Admin",
+                            is_superadmin=True,
+                        ))
+                        await _session.commit()
+                        _mlog.getLogger("app.main").info(
+                            "Provisioned first superadmin from ADMIN_EMAIL (%s)",
+                            _admin_email)
+    except Exception:
+        _mlog.getLogger("app.main").error(
+            "First-admin provisioning failed", exc_info=True)
 
     # --- Background jobs: APScheduler + Huey (single-process design) ------
     # Replaces the hand-rolled 30s/45s asyncio worker loops (the deleted
@@ -467,3 +542,25 @@ from fastapi.responses import JSONResponse  # noqa: E402
 async def root_health():
     """Lightweight health probe — also used by uptime monitors / load balancers."""
     return JSONResponse({"status": "ok", "service": "zemest-api", "version": "0.1.0"})
+
+
+@app.get("/healthz", include_in_schema=False)
+async def deep_health():
+    """Deep health probe — actually touches the database.
+
+    The root ``/`` probe is static JSON: an app that booted with a broken
+    schema (or lost the DB mid-flight) would still report "ok" and stay in
+    the load-balancer rotation. Compose healthchecks and uptime monitors
+    should use THIS endpoint: it returns 503 when ``SELECT 1`` fails.
+    """
+    try:
+        from sqlalchemy import text as _text
+        from app.database import engine as _engine
+        async with _engine.connect() as _conn:
+            await _conn.execute(_text("SELECT 1"))
+        return JSONResponse({"status": "ok", "db": "up"})
+    except Exception as _e:
+        return JSONResponse(
+            {"status": "degraded", "db": "down", "detail": str(type(_e).__name__)},
+            status_code=503,
+        )

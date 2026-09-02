@@ -1,38 +1,57 @@
 # =============================================================================
-# Zemest — PRODUCTION stack for ~10,000 users (single host, 8 vCPU / 16 GB)
+# Zemest — CANONICAL production stack (single host, 10K users/day)
 # =============================================================================
+# This is the ONE prod compose. (The older repos/zemest/docker-compose.prod.yml
+# was removed — same topology, nginx edge, manual certs; superseded.)
+#
 # Shape:
-#   * postgres:16     — tuned, NO published port (docker network only)
-#   * pgbouncer       — transaction pooling (asyncpg churn under control)
-#   * redis:7         — AOF persistence, LRU eviction, NO published port
-#   * api x2          — uvicorn replicas, scheduler OFF (plain request path)
-#   * scheduler x1    — the ONLY replica with SCHEDULER_ENABLED=true
-#   * worker          — Huey consumer (crawl/notifications)
-#   * caddy           — TLS terminator + load balancer (public entrypoint)
+#   caddy       — TLS (auto via Let's Encrypt), rate limiting, routing
+#   web         — Next.js frontend + BFF (cookies/CSRF live HERE, not at the
+#                 backend; Cookie→Bearer translation inside the BFF)
+#   api x2      — FastAPI replicas, NO scheduler, NO queue consumer: they
+#                 enqueue to the shared Huey file and serve requests only
+#   scheduler   — the ONLY replica running APScheduler jobs (publish sweep,
+#                 silent trainer) — one instance, no advisory-lock reliance
+#   worker      — the ONLY Huey consumer (crawl, notifications, style jobs)
+#   postgres:16 — tuned; pgbouncer in transaction mode in front
+#   redis:7     — rate limits, JWT denylist, cache (AOF)
+#   postiz      — OPTIONAL (profiles: [postiz]) social scheduling sidecar
 #
-# Scaling posture (see SCALING.md for the math):
-#   10k users ≈ 70 rps peak ≈ 2 uvicorn replicas × 2 workers each.
-#   Vertical ceiling before reshaping: ~40k users on 8 vCPU.
+# Browser traffic:  your-domain → caddy → web (BFF) → api (docker network)
+# Server callbacks: Meta + Paymob → caddy → api directly (fast lane)
 #
-# Usage:
-#   cp .env.example .env   # fill EVERYTHING — no secrets below, ever
+# Usage (from the repo root):
+#   cp deploy/.env.example deploy/.env    # fill EVERYTHING
 #   docker compose -f deploy/docker-compose.prod.yml up -d
+#   docker compose -f deploy/docker-compose.prod.yml --profile postiz up -d
 #
-# The dev compose (docker-compose.yml) stays for local work.
+# Capacity math + scaling path: repos/zemest/docs/SCALING.md
 # =============================================================================
 
 x-app-base: &app-base
   build:
-    context: ..
-    dockerfile: ../Dockerfile
-  env_file: ../.env
+    context: ../repos/zemest
+    dockerfile: Dockerfile
+  env_file: .env
   environment: &app-env
     APP_ENV: production
-    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
-    DATABASE_URL_SYNC: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+    APP_DEBUG: "false"
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD:?set in deploy/.env}@pgbouncer:6432/${POSTGRES_DB:-zemest}
+    DATABASE_URL_SYNC: postgresql://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB:-zemest}
     REDIS_URL: redis://redis:6379/0
-    SCHEDULER_ENABLED: "false"        # only the scheduler service flips this
-    HUEY_INLINE_CONSUMER: "false"     # only the worker service runs huey
+    # Shared SQLite queue file (WAL, multi-process safe on one host).
+    # Mounted on the SAME volume for api/scheduler/worker — without this the
+    # worker consumes an empty private file and every task silently runs
+    # inline on the API replicas instead.
+    HUEY_SQLITE_PATH: /huey/huey_queue.db
+    # API replicas: never run queue consumer or scheduler locally —
+    # dedicated services own both.
+    HUEY_INLINE_CONSUMER: "false"
+    SCHEDULER_INLINE_WORKER: "false"
+    SILENT_TRAINER_INLINE_WORKER: "false"
+    # A dedicated worker container consumes the shared queue → call sites
+    # enqueue (durable, exactly-once) instead of inline fallback.
+    HUEY_EXTERNAL_WORKER: "true"
   restart: unless-stopped
   depends_on: &app-depends
     db:
@@ -41,6 +60,8 @@ x-app-base: &app-base
       condition: service_healthy
     redis:
       condition: service_healthy
+  volumes:
+    - huey_data:/huey
   ulimits:
     nofile:
       soft: 65536
@@ -56,9 +77,13 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-zemest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-zemest}
+    # Postiz's role+database get created on first volume init (profile only).
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postiz-init.sh:/docker-entrypoint-initdb.d/20-postiz.sh:ro
     # NO ports: — the database is reachable only inside the compose network.
     command: >
       postgres
@@ -71,25 +96,23 @@ services:
       -c max_wal_size=2GB
       -c checkpoint_completion_target=0.9
       -c random_page_cost=1.1
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-zemest} -d ${POSTGRES_DB:-zemest}"]
       interval: 5s
       timeout: 5s
       retries: 12
     restart: unless-stopped
     logging: *default-logging
 
-  # -------------------------------------------------------------- pooler
+  # -------------------------------------------------------------------- pooler
   pgbouncer:
     image: edoburu/pgbouncer:latest
     environment:
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_USER: ${POSTGRES_USER:-zemest}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env}
       DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB}
+      DB_NAME: ${POSTGRES_DB:-zemest}
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 1000
       DEFAULT_POOL_SIZE: 40
@@ -101,7 +124,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_USER:-zemest} -d ${POSTGRES_DB:-zemest}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -111,8 +134,8 @@ services:
   # --------------------------------------------------------------------- cache
   redis:
     image: redis:7-alpine
-    # NO ports: — internal only. AOF on (rate-limit counters survive restart),
-    # LRU eviction so a flood of keys can't OOM the box.
+    # NO ports: — internal only. AOF on (rate-limit counters + JWT denylist
+    # survive restarts), LRU eviction so a flood of keys can't OOM the box.
     command: >
       redis-server
       --appendonly yes
@@ -128,73 +151,138 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  # ----------------------------------------------------------------- api x2
+  # ------------------------------------------------- frontend (Next.js + BFF)
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
+      args:
+        # NEXT_PUBLIC_* bake in at BUILD time — pass them here, not runtime.
+        NEXT_PUBLIC_SITE_URL: ${ZEMEST_DOMAIN:-https://your-domain.com}
+        NEXT_PUBLIC_FB_APP_ID: ${FB_APP_ID:-}
+    environment:
+      # Runtime BFF → backend (server-side only, docker network):
+      ZEMEST_BACKEND_URL: http://api:8000
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - "3000"
+    logging: *default-logging
+
+  # ------------------------------------------------------------------- api x2
   api:
     <<: *app-base
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips "*"
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --workers 2 --proxy-headers --forwarded-allow-ips "*"
     # NOTE: /docs is DISABLED in production (APP_ENV=production gates it) —
-    # the healthcheck uses the root probe instead.
+    # healthcheck probes the root endpoint instead.
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    expose:
+      - "8000"
     deploy:
       replicas: 2
       resources:
         limits:
           memory: 2g
 
-  # ------------------------------------------------------- scheduler (leader)
-  # Exactly ONE instance: owns the APScheduler cycles (publish 30s,
-  # silent trainer 45s, weekly rebuild). API replicas run with
-  # SCHEDULER_ENABLED=false so jobs fire once — duplicate cycles would
-  # double LLM spend and double-post.
+  # --------------------------------------------------------- scheduler (ONE)
+  # Exactly one instance: owns the APScheduler cycles (publish sweep 30 s,
+  # silent trainer 45 s, weekly rebuild). API replicas run with the inline
+  # workers OFF (see x-app-base) so jobs fire once, period — duplicate cycles
+  # would double LLM spend and double-publish posts. Postgres advisory locks
+  # (app/services/leader_election.py) remain as a second guard.
   scheduler:
     <<: *app-base
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 1 --proxy-headers
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8001
+      --workers 1 --proxy-headers
     environment:
       <<: *app-env
-      SCHEDULER_ENABLED: "true"
-      SILENT_TRAINER_INLINE_WORKER: "true"
       SCHEDULER_INLINE_WORKER: "true"
+      SILENT_TRAINER_INLINE_WORKER: "true"
+      HUEY_INLINE_CONSUMER: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    expose:
+      - "8001"
     deploy:
       replicas: 1
       resources:
         limits:
           memory: 2g
 
-  # --------------------------------------------------------------- huey worker
-  # Crawl + notification queue consumer (durable SQLite queue file is
-  # shared via volume; single consumer = no double-send).
+  # ------------------------------------------------------------- huey worker
+  # The ONLY consumer of the shared queue file. Crawls, order notifications,
+  # style jobs execute exactly once regardless of API replica count.
   worker:
     <<: *app-base
-    command: python -m app.tasks.worker_main
+    command: ["python", "-m", "app.tasks.worker_main"]
     environment:
       <<: *app-env
-      HUEY_INLINE_CONSUMER: "true"
-    volumes:
-      - huey_data:/app/huey_queue
+      HUEY_INLINE_CONSUMER: "false"
     deploy:
       replicas: 1
       resources:
         limits:
           memory: 1g
 
-  # --------------------------------------------------------------------- edge
+  # ---------------------------------------------------------------------- edge
   caddy:
     image: caddy:2-alpine
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      ZEMEST_DOMAIN: ${ZEMEST_DOMAIN:?set in deploy/.env}
     volumes:
       - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       - api
+      - web
     restart: unless-stopped
+    logging: *default-logging
+
+  # -------------------------------------------- OPTIONAL postiz (sidecar)
+  # Social scheduling UI + engine. Enable with: --profile postiz
+  # Per-tenant sessions in zemest (app/api/postiz.py) — no shared login.
+  postiz:
+    profiles: ["postiz"]
+    image: ghcr.io/gitroomhq/postiz-app:latest
+    restart: unless-stopped
+    environment:
+      MAIN_URL: ${POSTIZ_MAIN_URL:-http://localhost:4007}
+      FRONTEND_URL: ${POSTIZ_MAIN_URL:-http://localhost:4007}
+      NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_MAIN_URL:-http://localhost:4007}/api
+      JWT_SECRET: ${POSTIZ_JWT_SECRET:?set in deploy/.env}
+      DATABASE_URL: postgresql://postiz:${POSTIZ_POSTGRES_PASSWORD:?set in deploy/.env}@db:5432/postiz
+      REDIS_URL: redis://redis:6379/1
+      IS_GENERAL: "true"
+      DISABLE_REGISTRATION: "false"
+      BACKEND_INTERNAL_URL: http://localhost:4007
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+    volumes:
+      - postiz-uploads:/uploads
+      - postiz-config:/config/
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "4007"
     logging: *default-logging
 
 volumes:
@@ -203,3 +291,5 @@ volumes:
   huey_data:
   caddy_data:
   caddy_config:
+  postiz-uploads:
+  postiz-config:

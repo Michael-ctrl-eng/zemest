@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1
+# Zemest frontend — Next.js 16 (App Router, standalone output).
+# Build stage uses Bun (bun.lock is the canonical lockfile — same tool as
+# local dev/CI); the run stage uses plain Node for the standalone server
+# (Next's officially supported runtime; node_modules are pruned JS, runtime
+# agnostic).
+#
+# NEXT_PUBLIC_* vars are INLINED AT BUILD TIME by Next — pass them as build
+# args or they bake in as empty strings:
+#   docker build -f Dockerfile.web \
+#     --build-arg NEXT_PUBLIC_SITE_URL=https://your-domain.com \
+#     --build-arg NEXT_PUBLIC_FB_APP_ID=123456 \
+#     .
+# ZEMEST_BACKEND_URL is read at RUNTIME (where the BFF finds FastAPI).
+
+FROM oven/bun:1 AS build
+WORKDIR /app
+
+# Layer cache: deps first
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+
+# Sources (context = repo root; .dockerignore keeps node_modules/.next out)
+COPY . .
+
+ARG NEXT_PUBLIC_SITE_URL=""
+ARG NEXT_PUBLIC_API_URL=""
+ARG NEXT_PUBLIC_FB_APP_ID=""
+ARG NEXT_PUBLIC_GOATCOUNTER_CODE=""
+ENV NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL} \
+    NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_PUBLIC_FB_APP_ID=${NEXT_PUBLIC_FB_APP_ID} \
+    NEXT_PUBLIC_GOATCOUNTER_CODE=${NEXT_PUBLIC_GOATCOUNTER_CODE} \
+    NEXT_TELEMETRY_DISABLED=1
+
+# package.json build = next build + copy static/public into standalone
+RUN bun run build
+
+# ---------------------------------------------------------------- run stage
+FROM node:22-alpine AS run
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# .next/standalone already contains server.js + pruned node_modules; the
+# repo's build script copies .next/static and public into it as well.
+COPY --from=build /app/.next/standalone ./
+
+# Non-root
+RUN addgroup -S nextjs && adduser -S nextjs -G nextjs && chown -R nextjs:nextjs /app
+USER nextjs
+
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget -q -O- http://localhost:3000/ > /dev/null 2>&1 || exit 1
+
+CMD ["node", "server.js"]

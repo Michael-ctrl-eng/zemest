@@ -1,4 +1,13 @@
-# Zemest production edge — TLS + load balancing across API replicas.
+# Zemest production edge — TLS + routing.
+#
+# ROUTING CONTRACT (matches the BFF design in src/app/api/**):
+#   * Browser /api/* MUST land on the Next.js BFF (web:3000) — it owns the
+#     httpOnly session cookies, CSRF/Origin checks, and Cookie→Bearer
+#     translation. Routing /api/* straight to the backend would bypass the
+#     BFF: login would return JSON instead of setting cookies, and the
+#     session middleware would never see a valid session.
+#   * Server-to-server callbacks (Meta webhooks, Paymob HMAC callbacks) have
+#     no cookies and deserve a fast lane straight to the API replicas.
 #
 # Hardening notes:
 #   * request logging ON (abuse forensics) but tokens never appear in
@@ -25,30 +34,36 @@
 		}
 	}
 
-	# --- API (load-balanced across the 2 replicas) ---
-	handle /api/* {
-		reverse_proxy api:8000 api:8000 {
-			lb_policy least_conn
-			health_uri /
-			health_interval 10s
-			health_timeout 3s
-			# Header forwarding so the app's rate limiter and admin
-			# tools see real client IPs (uvicorn runs --proxy-headers).
-			header_up X-Real-IP {remote_host}
-		}
-	}
-
-	# --- webhook fast lane (Meta retries deserve quick 2xx/4xx) ---
+	# --- webhook fast lane: Meta (Messenger/IG/WhatsApp) retries deserve
+	# quick 2xx/4xx, no cookie processing — straight to the API replicas.
 	handle /api/webhook/* {
 		reverse_proxy api:8000 api:8000 {
 			lb_policy first_available
 			health_uri /
+			health_interval 10s
+			health_timeout 3s
+			header_up X-Real-IP {remote_host}
 		}
 	}
 
-	# --- Next.js frontend (dashboard + marketing) ---
+	# --- Paymob HMAC callback: server-to-server, same fast-lane treatment.
+	handle /api/payments/webhook {
+		reverse_proxy api:8000 api:8000 {
+			lb_policy first_available
+			health_uri /
+			health_interval 10s
+		}
+	}
+
+	# --- ALL other /api/*: the Next.js BFF (cookies + CSRF live there; it
+	# reaches the backend over the docker network).
+	handle /api/* {
+		reverse_proxy web:3000
+	}
+
+	# --- Next.js frontend (dashboard + marketing + BFF routes)
 	handle {
-		reverse_proxy {$WEB_UPSTREAM:web:3000}
+		reverse_proxy web:3000
 	}
 
 	log {
