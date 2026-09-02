@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     # B7-04/V5: the DPA promises encrypted-at-rest; columns were plaintext).
     # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     TENANT_TOKEN_ENCRYPTION_KEY: str = ""
+    # Multi-replica leader election: false on plain API replicas, true on
+    # exactly ONE scheduler service (duplicate trainer/publish cycles =
+    # double LLM spend + duplicate posts).
+    SCHEDULER_ENABLED: bool = True
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

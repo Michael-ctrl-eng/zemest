@@ -1,0 +1,61 @@
+# Zemest production edge — TLS + load balancing across API replicas.
+#
+# Hardening notes:
+#   * request logging ON (abuse forensics) but tokens never appear in
+#     URLs anymore (Graph calls are Bearer-header; FB endpoints take
+#     JSON bodies).
+#   * /docs, /redoc, /openapi.json are gated off at the APP level in
+#     production — nothing to hide here, defense in depth.
+#   * generous body limit: product CSV imports + image URLs.
+
+{$ZEMEST_DOMAIN} {
+	encode zstd gzip
+
+	# Body size cap — 32 MB covers CSV imports comfortably.
+	request_body {
+		max_size 32MB
+	}
+
+	# Basic abuse brakes in front of the app's own rate limiter.
+	rate_limit {
+		zone dynamic {
+			key {remote_host}
+			events 120
+			window 1m
+		}
+	}
+
+	# --- API (load-balanced across the 2 replicas) ---
+	handle /api/* {
+		reverse_proxy api:8000 api:8000 {
+			lb_policy least_conn
+			health_uri /
+			health_interval 10s
+			health_timeout 3s
+			# Header forwarding so the app's rate limiter and admin
+			# tools see real client IPs (uvicorn runs --proxy-headers).
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# --- webhook fast lane (Meta retries deserve quick 2xx/4xx) ---
+	handle /api/webhook/* {
+		reverse_proxy api:8000 api:8000 {
+			lb_policy first_available
+			health_uri /
+		}
+	}
+
+	# --- Next.js frontend (dashboard + marketing) ---
+	handle {
+		reverse_proxy {$WEB_UPSTREAM:web:3000}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 100mb
+			roll_keep 10
+		}
+		format json
+	}
+}

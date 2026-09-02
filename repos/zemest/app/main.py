@@ -232,57 +232,72 @@ async def lifespan(app: FastAPI):
     # inline_worker.py / training_worker.py loops) and the dead Celery beat
     # schedule: exact-time triggers, tz-aware cron, coalescing,
     # max_instances=1 so a slow cycle can never stack on itself.
+    #
+    # MULTI-REPLICA LEADER ELECTION: set SCHEDULER_ENABLED=false on plain
+    # API replicas and true on exactly ONE dedicated scheduler service —
+    # otherwise N replicas each fire the same trainer/publish cycles
+    # (duplicate LLM spend, duplicate posts). Single-process deployments
+    # keep the default (true) and nothing changes.
     scheduler = None
+    _scheduler_master = str(getattr(settings, "SCHEDULER_ENABLED", True)).lower() in (
+        "1", "true", "yes", "on",
+    )
     try:
-        from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-        scheduler = AsyncIOScheduler(timezone="Africa/Cairo")
-
-        async def _publish_job():
-            from app.tasks.scheduling_tasks import _publish_due_posts_async
-            await _publish_due_posts_async()
-
-        async def _trainer_job():
-            from app.tasks.training_worker import training_cycle_once
-            await training_cycle_once()
-
-        async def _personality_job():
-            from app.tasks.style_tasks import _rebuild_all_personalities_async
-            await _rebuild_all_personalities_async()
-
-        if str(getattr(settings, "SCHEDULER_INLINE_WORKER", True)).lower() in (
-            "1", "true", "yes", "on",
-        ):
-            # 30s interval = the old inline worker cadence: posts publish
-            # within ~30s of their scheduled time; coalesce catches up after
-            # a sleep/restart without hot-looping.
-            scheduler.add_job(
-                _publish_job, "interval", seconds=30,
-                id="publish-due-posts", max_instances=1, coalesce=True,
+        if not _scheduler_master:
+            _mlog.getLogger("app.main").info(
+                "SCHEDULER_ENABLED=false — background jobs disabled on this replica "
+                "(a dedicated scheduler service owns them)"
             )
         else:
-            _mlog.getLogger("app.main").info(
-                "Publish job disabled via SCHEDULER_INLINE_WORKER (external worker owns it)")
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-        if str(getattr(settings, "SILENT_TRAINER_INLINE_WORKER", True)).lower() in (
-            "1", "true", "yes", "on",
-        ):
+            scheduler = AsyncIOScheduler(timezone="Africa/Cairo")
+
+            async def _publish_job():
+                from app.tasks.scheduling_tasks import _publish_due_posts_async
+                await _publish_due_posts_async()
+
+            async def _trainer_job():
+                from app.tasks.training_worker import training_cycle_once
+                await training_cycle_once()
+
+            async def _personality_job():
+                from app.tasks.style_tasks import _rebuild_all_personalities_async
+                await _rebuild_all_personalities_async()
+
+            if str(getattr(settings, "SCHEDULER_INLINE_WORKER", True)).lower() in (
+                "1", "true", "yes", "on",
+            ):
+                # 30s interval = the old inline worker cadence: posts publish
+                # within ~30s of their scheduled time; coalesce catches up after
+                # a sleep/restart without hot-looping.
+                scheduler.add_job(
+                    _publish_job, "interval", seconds=30,
+                    id="publish-due-posts", max_instances=1, coalesce=True,
+                )
+            else:
+                _mlog.getLogger("app.main").info(
+                    "Publish job disabled via SCHEDULER_INLINE_WORKER (external worker owns it)")
+
+            if str(getattr(settings, "SILENT_TRAINER_INLINE_WORKER", True)).lower() in (
+                "1", "true", "yes", "on",
+            ):
+                scheduler.add_job(
+                    _trainer_job, "interval", seconds=45,
+                    id="silent-trainer", max_instances=1, coalesce=True,
+                )
+            else:
+                _mlog.getLogger("app.main").info(
+                    "Silent trainer disabled via SILENT_TRAINER_INLINE_WORKER")
+
+            # Weekly personality rebuild — Sunday 03:00 Cairo (was Celery beat).
             scheduler.add_job(
-                _trainer_job, "interval", seconds=45,
-                id="silent-trainer", max_instances=1, coalesce=True,
+                _personality_job, "cron", day_of_week="sun", hour=3, minute=0,
+                id="rebuild-personality-weekly", max_instances=1, coalesce=True,
             )
-        else:
+            scheduler.start()
             _mlog.getLogger("app.main").info(
-                "Silent trainer disabled via SILENT_TRAINER_INLINE_WORKER")
-
-        # Weekly personality rebuild — Sunday 03:00 Cairo (was Celery beat).
-        scheduler.add_job(
-            _personality_job, "cron", day_of_week="sun", hour=3, minute=0,
-            id="rebuild-personality-weekly", max_instances=1, coalesce=True,
-        )
-        scheduler.start()
-        _mlog.getLogger("app.main").info(
-            "APScheduler started (publish 30s, trainer 45s, weekly rebuild Sun 03:00 Cairo)")
+                "APScheduler started (publish 30s, trainer 45s, weekly rebuild Sun 03:00 Cairo)")
     except Exception:
         _mlog.getLogger("app.main").warning("APScheduler failed to start", exc_info=True)
 
