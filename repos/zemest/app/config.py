@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     PAYMOB_WEBHOOK_HMAC_SECRET: str = ""  # HMAC-SHA512 webhook signing secret
     PAYMOB_BASE_URL: str = "https://egypt.paymob.com"  # Egypt region Intention API base
     PAYMOB_CURRENCY: str = "EGP"
+    # Minimum deposit accepted for a payment intention (audit A4-L4: a
+    # 1-piaster "deposit" previously confirmed an order).
+    PAYMOB_MIN_DEPOSIT_EGP: float = 1.0
+    # Canonical public origin for outbound webhook URLs (audit A4-M3: the
+    # notification_url was built from the request Host header — a poisoned
+    # request redirected genuine Paymob callbacks to an attacker host).
+    PUBLIC_BASE_URL: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

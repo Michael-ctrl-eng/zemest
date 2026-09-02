@@ -204,11 +204,50 @@ async def _process_transaction(db: AsyncSession, obj: dict) -> None:
     if obj.get("pending"):
         logger.info("Paymob transaction %s pending — no state change", tx_id)
         return
-    if obj.get("is_refunded") or obj.get("is_voided"):
-        # Refunds/voids map onto the manual returns handling (G1 §4) — log only.
-        logger.info(
-            "Paymob transaction %s is a refund/void — no automatic state change", tx_id
+
+    # Currency check (audit A7-M2): a non-EGP transaction was compared as
+    # piasters → wrong paid/deposit classification. Paymob supports multiple
+    # currencies; only the configured one is comparable.
+    tx_currency = (obj.get("currency") or "").upper()
+    expected_currency = (get_settings().PAYMOB_CURRENCY or "EGP").upper()
+    if tx_currency and tx_currency != expected_currency:
+        logger.error(
+            "Paymob transaction %s currency mismatch: got %s, expected %s — "
+            "flagged for manual reconciliation, no state change",
+            tx_id, tx_currency, expected_currency,
         )
+        return
+
+    if obj.get("is_refunded") or obj.get("is_voided"):
+        # Refunds/voids land on PAID orders only (audit A7-M2: previously
+        # log-only — the merchant never saw the money come back). Compare-
+        # and-set: a paid order transitions to refunded/voided exactly once;
+        # any other state (or a duplicate) leaves rows untouched.
+        refund_target = "voided" if obj.get("is_voided") else "refunded"
+        refund_stmt = (
+            update(Order)
+            .where(
+                Order.id == order_uuid,
+                Order.payment_status.in_(("paid", "deposit_paid")),
+                or_(
+                    Order.paymob_transaction_id.is_(None),
+                    Order.paymob_transaction_id != tx_id,
+                ),
+            )
+            .values(payment_status=refund_target, paymob_transaction_id=tx_id)
+        )
+        refund_result = await db.execute(refund_stmt)
+        await db.commit()
+        if refund_result.rowcount:
+            logger.info(
+                "Paymob webhook: order %s payment_status → %s (tx %s)",
+                order_uuid, refund_target, tx_id,
+            )
+        else:
+            logger.info(
+                "Paymob transaction %s refund/void — no eligible order state",
+                tx_id,
+            )
         return
 
     try:
@@ -289,16 +328,36 @@ async def create_payment_intention(
     order = res.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    # State guard (audit A4-M1): creating a new intention on an already-paid
+    # (or refunded/voided) order previously regressed it to pending_deposit,
+    # wedging fulfillment views. Only genuinely unpaid states qualify.
+    allowed = (None, "", "pending", "pending_deposit", "failed")
+    if order.payment_status not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Order payment is already {order.payment_status!r} — "
+                   f"new deposit intentions are only allowed for unpaid orders",
+        )
+
+    min_deposit = float(get_settings().PAYMOB_MIN_DEPOSIT_EGP)
+    if req.deposit_amount < min_deposit:
+        raise HTTPException(
+            400, f"deposit amount must be at least {min_deposit:g} EGP"
+        )
     if req.deposit_amount > order.total:
         raise HTTPException(
             status_code=400, detail="deposit amount cannot exceed the order total"
         )
 
     # Public webhook URL Paymob calls back (state changes happen only there).
-    # request.base_url respects the Host header; behind a proxy/BFF set the
-    # public backend origin on the proxy (X-Forwarded-Host etc.) or override
-    # notification_url at the client level.
-    notification_url = f"{str(request.base_url).rstrip('/')}/api/payments/webhook"
+    # SECURITY (audit A4-M3): built from PUBLIC_BASE_URL when configured —
+    # NEVER from the request Host header, which an attacker can poison to
+    # have Paymob deliver genuine transaction callbacks (masked PAN,
+    # amounts, phones) to a host they control. Falls back to the request
+    # origin only when the operator has not set the canonical origin (dev).
+    base = get_settings().PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+    notification_url = f"{base}/api/payments/webhook"
 
     name_parts = (order.customer_name or "Customer").split(" ", 1)
     billing_data = {
