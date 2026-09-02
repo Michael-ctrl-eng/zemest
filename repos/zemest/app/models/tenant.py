@@ -36,13 +36,6 @@ class Tenant(Base):
     wa_access_token: Mapped[Optional[str]] = mapped_column(EncryptedText())
     wa_waba_id: Mapped[Optional[str]] = mapped_column(String(64))
 
-    # Transparent encryption layer: `tenant.page_access_token` reads
-    # plaintext and encrypts on assignment — every existing caller keeps
-    # working unchanged, while the DB column holds ciphertext only.
-    page_access_token = _make_encrypted_property("_page_access_token_raw")
-    ig_access_token = _make_encrypted_property("_ig_access_token_raw")
-    wa_access_token = _make_encrypted_property("_wa_access_token_raw")
-
     # --- Channel connection metadata (account display info + connect time) ---
     messenger_meta: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     instagram_meta: Mapped[Optional[dict]] = mapped_column(JSON, default=None)

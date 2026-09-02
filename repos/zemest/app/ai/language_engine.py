@@ -117,49 +117,6 @@ def _has_arabizi_digits(text: str) -> bool:
     return bool(re.search(r"[a-zA-Z][378529]|[378529][a-zA-Z]", text))
 
 
-# A token is "numeric" when it is only digits (Latin or Arabic-Indic),
-# punctuation, currency/phone glue, or size/price-like shapes. These must
-# NEVER be transliterated — "350" is a price, not ع-خ-0.
-_NUMERIC_TOKEN_RE = re.compile(
-    r"[0-9٠-٩]+(?:[.,:/-][0-9٠-٩]+)*"
-)
-
-
-def _is_numeric_token(token: str) -> bool:
-    """True for phone numbers, prices, sizes, quantities, dates.
-
-    Handles: 350, 40, 01276543210, 2.5, ١٢٣, +20, 10-12, 350.00,
-    size40 (trailing digits attached to a Latin word go Latin-side).
-    """
-    if _NUMERIC_TOKEN_RE.fullmatch(token):
-        return True
-    # Phone with leading + / country code
-    if re.fullmatch(r"\+?[0-9٠-٩][0-9٠-٩\-\s]*", token):
-        return True
-    return False
-
-
-def _looks_like_arabizi(text: str) -> bool:
-    """Arabizi requires letters ADJACENT to Arabizi digits, not just digits.
-
-    Audit H2: any English sentence with a common digit ("size 42",
-    "order 2 items", "iPhone 13") was misdetected as arabizi and then
-    transliterated into garbage. Real Arabizi interleaves letters with the
-    substituted digits INSIDE a word: "3ayez", "7aga", "2olt", "5alas".
-    """
-    text_lower = text.lower()
-    # Digit directly attached to letters inside a word (either side).
-    if re.search(r"[a-z][3782569]|[3782569][a-z]", text_lower):
-        return True
-    # Whole-word digit-words from the dialect lexicons ("5alas" caught by
-    # adjacency; standalone tokens like "3" alone are NOT arabizi).
-    for words in ARABIZI_DIALECT_WORDS.values():
-        for w in words:
-            if re.search(rf"\b{re.escape(w)}\b", text_lower):
-                return True
-    return False
-
-
 def _detect_arabizi_dialect(text: str) -> Optional[str]:
     """Detect which Arabic dialect an Arabizi text uses.
 
@@ -312,9 +269,7 @@ def detect_language_advanced(text: str) -> LanguageDetection:
         )
 
     arabic_ratio = arabic_count / total
-    # Audit H2: require LETTER-DIGIT adjacency, not bare digit presence —
-    # "size 42 available" is English, "3ayez el sandal" is arabizi.
-    has_arabizi = _looks_like_arabizi(text) and latin_count > 0
+    has_arabizi = _has_arabizi_digits(text) and latin_count > 0
 
     detected_scripts: list[str] = []
     if arabic_count > 0:
