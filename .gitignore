@@ -102,3 +102,6 @@ dev.log
 *.db-shm
 *.db-wal
 huey_queue.db*
+# npm-audit CI bridge artifact — bun.lock stays canonical; never commit the
+# npm lockfile or Bun/npm resolution can drift apart.
+package-lock.json
