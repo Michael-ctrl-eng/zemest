@@ -59,9 +59,12 @@ jobs:
         # Belt-and-braces next to tests/security/test_no_client_secrets.py:
         # scan the BUILT output (not just the source) for key-shaped
         # strings — a secret that only appears after compilation is caught
-        # here, before deploy.
+        # here, before deploy. Only browser-shipped code matters, so scan
+        # .next/static (client chunks) + standalone's .next, skipping the
+        # vendored node_modules (font names like "HankenGrotesk-…" would
+        # otherwise false-positive on the sk- pattern).
         run: |
-          if grep -rE "sk-[A-Za-z0-9]{16,}|sk-or-v1-|gsk_[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|ghp_[A-Za-z0-9]{20,}" .next/static .next/standalone 2>/dev/null; then
+          if grep -rE --exclude-dir=node_modules "sk-[A-Za-z0-9]{20,}|sk-or-v1-[A-Za-z0-9]{16,}|gsk_[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|ghp_[A-Za-z0-9]{20,}" .next/static .next/standalone/.next 2>/dev/null; then
             echo "::error::key-shaped string found in the client bundle"
             exit 1
           fi
