@@ -70,7 +70,7 @@ jobs:
       # zizmor has no --output flag (SARIF goes to stdout); redirect instead.
       # Version pinned so exit-code semantics can't drift under us.
       - run: uvx zizmor@1.30.0 --format sarif . > zizmor.sarif
-      - uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+      - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         if: always()
         with:
           sarif_file: zizmor.sarif
