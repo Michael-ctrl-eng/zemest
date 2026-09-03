@@ -9,6 +9,7 @@ from app.schemas.auth import (
     FacebookLoginRequest,
     LoginRequest,
     LogoutRequest,
+    ProfileUpdateRequest,
     RefreshRequest,
     RegisterAckResponse,
     RegisterRequest,
@@ -123,6 +124,34 @@ async def logout(
 async def get_me(user=Depends(get_current_user)):
     from app.services.plan_service import effective_plan, trial_state
 
+    return UserResponse(
+        id=str(user.id),
+        name=user.name,
+        email=user.email,
+        fb_user_id=user.fb_user_id,
+        is_superadmin=bool(user.is_superadmin),
+        plan=effective_plan(user),
+        trial=trial_state(user),
+    )
+
+
+@router.patch("/me/profile", response_model=UserResponse)
+async def update_my_profile(
+    req: ProfileUpdateRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set optional profile info (date of birth) — encrypted at rest.
+
+    Feeds the analytics/admin views ("date of birth of the user" in the
+    product requirements). Validation lives in the schema (ISO date,
+    no future dates, 13–120 years).
+    """
+    from app.services.plan_service import effective_plan, trial_state
+
+    if "date_of_birth" in req.model_fields_set:
+        user.date_of_birth = req.date_of_birth or None
+    await db.commit()
     return UserResponse(
         id=str(user.id),
         name=user.name,

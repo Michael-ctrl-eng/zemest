@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from app.models.analytics import VisitorProfile
 from app.models.user import User
 from app.services import auth_service
 from app.services.plan_service import (
@@ -204,3 +205,62 @@ class TestSignupIPStorage:
             )
         ).scalar_one()
         assert found.id == user.id
+
+
+@pytest.mark.asyncio
+class TestProfileDOB:
+    async def test_set_dob_roundtrip_encrypted(self, client, auth_headers, db_session, test_user):
+        resp = await client.patch(
+            "/api/auth/me/profile",
+            json={"date_of_birth": "1996-04-17"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        await db_session.refresh(test_user)
+        assert test_user.date_of_birth == "1996-04-17"
+
+    async def test_dob_validation(self, client, auth_headers):
+        for bad in ("not-a-date", "2099-01-01", "2020-01-01", "1800-01-01"):
+            resp = await client.patch(
+                "/api/auth/me/profile", json={"date_of_birth": bad}, headers=auth_headers
+            )
+            assert resp.status_code == 422, f"{bad} should be rejected: {resp.status_code}"
+
+    async def test_dob_clears_with_null(self, client, auth_headers, db_session, test_user):
+        test_user.date_of_birth = "1996-04-17"
+        await db_session.commit()
+        resp = await client.patch(
+            "/api/auth/me/profile", json={"date_of_birth": None}, headers=auth_headers
+        )
+        assert resp.status_code == 200
+        await db_session.refresh(test_user)
+        assert test_user.date_of_birth is None
+
+    async def test_profile_requires_auth(self, client):
+        resp = await client.patch("/api/auth/me/profile", json={"date_of_birth": "1996-04-17"})
+        assert resp.status_code == 401
+
+    async def test_dob_flows_into_analytics_visitor(
+        self, client, auth_headers, db_session, test_user
+    ):
+        await client.patch(
+            "/api/auth/me/profile", json={"date_of_birth": "1995-06-01"}, headers=auth_headers
+        )
+        await db_session.commit()
+        from app.services import analytics_service
+
+        await analytics_service.ingest_events(
+            db_session,
+            [{"type": "page_view", "path": "/"}],
+            visitor_key="v-dob",
+            session_key="s",
+            client_ip="1.2.3.4",
+            user=test_user,
+        )
+        await db_session.commit()
+        profile = (
+            await db_session.execute(
+                select(VisitorProfile).where(VisitorProfile.visitor_key == "v-dob")
+            )
+        ).scalar_one()
+        assert profile.date_of_birth == "1995-06-01"
