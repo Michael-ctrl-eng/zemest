@@ -14,6 +14,7 @@ from app.models.scheduled_post import ScheduledPost, PostInsights
 from app.models.blog_post import BlogPost
 from app.models.analytics import AnalyticsBatch, AnalyticsDaily, VisitorProfile
 from app.models.report import SupportReport
+from app.models.vault import VaultFile
 
 __all__ = [
     "User",
@@ -40,4 +41,5 @@ __all__ = [
     "AnalyticsDaily",
     "VisitorProfile",
     "SupportReport",
+    "VaultFile",
 ]

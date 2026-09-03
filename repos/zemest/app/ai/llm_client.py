@@ -61,6 +61,67 @@ _ZAI_CONFIG: dict | None = None
 _ZAI_LOADED = False
 
 
+# --- CONCURRENT-USER HARDENING (scale to 10k users/day) -------------------- #
+# 4. Per-provider key pool: OPENROUTER_API_KEYS accepts a comma-separated
+#    list. Round-robin under normal load; a key that trips a 429 is cooled
+#    down for 60s and the pool instantly rotates to the next one — one key's
+#    rate limit never stalls the whole reply pipeline.
+class _KeyPool:
+    """Round-robin API-key pool with per-key 429 cooldown."""
+
+    def __init__(self, raw: str):
+        self.keys: list[str] = [k.strip() for k in (raw or "").split(",") if k.strip()]
+        self._idx = 0
+        self._cooldown: dict[str, float] = {}
+
+    def __bool__(self) -> bool:
+        return bool(self.keys)
+
+    def pick(self) -> str | None:
+        if not self.keys:
+            return None
+        now = time.monotonic()
+        live = [k for k in self.keys if self._cooldown.get(k, 0.0) <= now]
+        pool = live or self.keys  # all cooling -> least-bad: use anyway
+        self._idx = (self._idx + 1) % len(pool)
+        return pool[self._idx]
+
+    def penalize(self, key: str, seconds: float = 60.0) -> None:
+        if key:
+            self._cooldown[key] = time.monotonic() + seconds
+
+
+_OR_KEY_POOL: _KeyPool | None = None
+
+
+def _get_or_pool() -> _KeyPool:
+    """OPENROUTER_API_KEYS pool, falling back to the single key env var."""
+    global _OR_KEY_POOL
+    if _OR_KEY_POOL is None:
+        pool = _KeyPool(getattr(settings, "OPENROUTER_API_KEYS", "") or "")
+        if not pool and settings.OPENROUTER_API_KEY:
+            pool = _KeyPool(settings.OPENROUTER_API_KEY)
+        _OR_KEY_POOL = pool
+    return _OR_KEY_POOL
+
+
+# 5. Global LLM concurrency gate: at most LLM_MAX_CONCURRENCY calls in
+#    flight; excess requests QUEUE instead of hammering providers into
+#    429 storms during concurrent-user spikes.
+_LLM_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _get_llm_semaphore() -> asyncio.Semaphore:
+    global _LLM_SEMAPHORE
+    if _LLM_SEMAPHORE is None:
+        try:
+            limit = max(1, int(getattr(settings, "LLM_MAX_CONCURRENCY", 8)))
+        except (TypeError, ValueError):
+            limit = 8
+        _LLM_SEMAPHORE = asyncio.Semaphore(limit)
+    return _LLM_SEMAPHORE
+
+
 def _load_zai_config() -> dict | None:
     """Load Z.ai credentials from /etc/.z-ai-config (cached, best-effort).
 
@@ -147,13 +208,15 @@ async def chat_completion_with_usage(
     zai_cfg = _load_zai_config()
     if zai_cfg is not None and (model is None or model == settings.OPENROUTER_MODEL):
         try:
-            return await _call_zai(messages, temperature, max_tokens, zai_cfg)
+            async with _get_llm_semaphore():
+                return await _call_zai(messages, temperature, max_tokens, zai_cfg)
         except Exception as e:
             logger.warning(f"Z.ai provider failed: {e}, falling through to OpenRouter...")
 
-    # Provider 2: OpenRouter.
+    # Provider 2: OpenRouter (multi-key pool + concurrency gate).
     # Fail fast: no key configured (or breaker open) → single instant error.
-    if not settings.OPENROUTER_API_KEY:
+    pool = _get_or_pool()
+    if not pool:
         if time.monotonic() < _NO_KEY_UNTIL:
             raise RuntimeError("No LLM provider available (Z.ai down, OPENROUTER_API_KEY unset)")
         _NO_KEY_UNTIL = time.monotonic() + _NO_KEY_COOLDOWN
@@ -165,12 +228,16 @@ async def chat_completion_with_usage(
 
     last_error = None
     for i, current_model in enumerate(models_to_try):
+        api_key = pool.pick()
         try:
-            return await _call_openrouter(
-                messages, current_model, temperature, max_tokens
-            )
+            async with _get_llm_semaphore():
+                return await _call_openrouter(
+                    messages, current_model, temperature, max_tokens, api_key
+                )
         except Exception as e:
             last_error = e
+            if "Rate limited" in str(e):
+                pool.penalize(api_key)  # rotate off this key for 60s
             logger.warning(f"Model {current_model} failed: {e}, trying next...")
             # 3. Snappy backoff (was 1s flat → 4s+ wasted per message on failure)
             if i < len(models_to_try) - 1:
@@ -206,12 +273,17 @@ async def _call_openrouter(
     model: str,
     temperature: float,
     max_tokens: int,
+    api_key: str | None = None,
 ) -> LLMResponse:
-    """Make a single API call to OpenRouter using the pooled client."""
+    """Make a single API call to OpenRouter using the pooled client.
+
+    ``api_key`` comes from the rotation pool (see _KeyPool)."""
+    if not api_key:
+        raise RuntimeError("No OpenRouter key available")
     prepared_messages = _prepare_messages(messages, model)
 
     headers = {
-        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://zemest.local",
         "X-Title": "Zemest",

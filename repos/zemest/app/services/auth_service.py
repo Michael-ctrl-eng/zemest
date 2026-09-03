@@ -189,11 +189,14 @@ def _jti_of(token: str) -> str:
     return str(payload.get("jti", ""))
 
 
-async def login_user(db: AsyncSession, email: str, password: str) -> dict:
+async def login_user(db: AsyncSession, email: str, password: str, request=None) -> dict:
     """Verify credentials and return a token pair.
 
     Timing-equalized: unknown emails still pay the full bcrypt cost.
     Blocked accounts are rejected before any token is minted.
+    When ``request`` is passed, a session row (IP/geo/device/browser) is
+    recorded best-effort for the admin analytics screens (audit F19: the
+    ``user_sessions`` table existed but was never populated).
     """
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
@@ -208,6 +211,13 @@ async def login_user(db: AsyncSession, email: str, password: str) -> dict:
 
     if user.is_blocked:
         raise AccountBlocked()
+
+    if request is not None:
+        try:
+            from app.services.session_tracking import record_user_session
+            await record_user_session(db, user, request)
+        except Exception:  # noqa: BLE001 — tracking must never block login
+            pass
 
     return await issue_token_pair(db, user)
 

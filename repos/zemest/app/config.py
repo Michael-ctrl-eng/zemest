@@ -36,8 +36,13 @@ class Settings(BaseSettings):
 
     # OpenRouter (free models)
     OPENROUTER_API_KEY: str = ""
+    # Multi-key rotation for concurrent load: comma-separated list; a key
+    # that trips a 429 is cooled down 60s and the next key is used.
+    OPENROUTER_API_KEYS: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_MODEL: str = "meta-llama/llama-4-maverick:free"
+    # Max in-flight LLM calls (queues excess instead of 429-storming).
+    LLM_MAX_CONCURRENCY: int = 8
 
     # Gemini (free: 15 RPM, 1M tokens/day)
     GEMINI_API_KEY: str = ""
@@ -85,6 +90,14 @@ class Settings(BaseSettings):
     # one-time BotFather setup steps.
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_ADMIN_CHAT_ID: str = ""
+
+    # --- Encrypted data vault (AES-256-GCM + zstd/gzip) --------------------
+    # Archives chat histories, customer profiles and user profiles as
+    # compressed+encrypted files under VAULT_DIR (app/services/vault.py).
+    # Master key: 32-byte hex (64 chars) or base64 — generate with:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    VAULT_MASTER_KEY: str = ""
+    VAULT_DIR: str = "data/vault"
 
     # Postiz (social media scheduler sidecar)
     POSTIZ_URL: str = "http://localhost:4007"

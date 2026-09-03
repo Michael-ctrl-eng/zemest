@@ -57,7 +57,8 @@ AI-STRATEGY.md §2 for the exact math.
 | 9 | `ADMIN_EMAIL` + `ADMIN_PASSWORD` | you pick them | free | ✅ first admin login |
 | 10 | `POSTIZ_*` (3 vars) | your Postiz instance | free self-hosted | ⬜ optional post scheduler sidecar |
 | 11 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ADMIN_CHAT_ID` | @BotFather on Telegram → /newbot, then getUpdates for your chat id | free | ⬜ for instant report/alert notifications to your phone |
-| 12 | GitHub Actions secrets | **none needed** — CI uses the built-in `GITHUB_TOKEN` | free | — |
+| 12 | `VAULT_MASTER_KEY` | `python -c "import secrets; print(secrets.token_hex(32))"` (generate once, BACK IT UP) | free | ⬜ for the encrypted chat/profile vault (AES-256-GCM + zstd). Without it the vault panel shows "disabled" and everything else works |
+| 13 | GitHub Actions secrets | **none needed** — CI uses the built-in `GITHUB_TOKEN` | free | — |
 
 **No analytics key exists and none is needed**: page-view/click analytics is
 first-party (own backend, zstd+Fernet at rest) — no third-party script, no

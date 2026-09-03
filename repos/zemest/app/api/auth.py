@@ -69,7 +69,8 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
 @_limiter.limit("5/minute")
 async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
-        pair = await auth_service.login_user(db, req.email, req.password)
+        # Session/geo tracking happens inside login_user (best-effort).
+        pair = await auth_service.login_user(db, req.email, req.password, request=request)
         await db.commit()
         return TokenResponse(**pair)
     except auth_service.AuthError as e:
@@ -115,8 +116,16 @@ async def logout(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Revoke one refresh token (idempotent, always 204)."""
+    """Revoke one refresh token (idempotent, always 204).
+
+    Also closes the user's tracked admin-analytics sessions (best-effort).
+    """
     await auth_service.revoke_refresh_token(db, req.refresh_token)
+    try:
+        from app.services.session_tracking import mark_sessions_inactive
+        await mark_sessions_inactive(db, user.id)
+    except Exception:  # noqa: BLE001 — never block logout
+        pass
     await db.commit()
 
 

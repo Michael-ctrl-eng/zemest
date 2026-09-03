@@ -306,6 +306,37 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Encrypted data vault: sealed chat/profile archives -->
+    <div class="panel">
+      <h2>Encrypted Data Vault</h2>
+      <p style="margin:0 0 8px;color:#666;font-size:13px">
+        Chats, customer profiles and user profiles, sealed as
+        AES-256-GCM encrypted + compressed files. Only this admin panel can
+        decrypt them. Requires <code>VAULT_MASTER_KEY</code> in the backend env.
+      </p>
+      <div style="margin-bottom:8px">
+        <button class="btn" onclick="createVaultArchive('chat_archive')">Archive chats now</button>
+        <button class="btn" onclick="createVaultArchive('customer_profiles')">Archive customer profiles</button>
+        <button class="btn" onclick="createVaultArchive('user_profiles')">Archive user profiles</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Kind</th>
+            <th>Rows</th>
+            <th>Original</th>
+            <th>Stored</th>
+            <th>Compression</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="vault-table">
+          <tr><td colspan="7" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </main>
 
   <script>
@@ -560,6 +591,77 @@
       }
     }
 
+    // ---- Encrypted data vault -------------------------------------------
+    async function loadVault() {
+      try {
+        const d = await fetchJSON("/api/admin/vault");
+        const tbody = document.getElementById("vault-table");
+        if (!d.available) {
+          tbody.innerHTML = `<tr><td colspan="7" class="empty">Vault disabled — set VAULT_MASTER_KEY (32-byte hex) in the backend environment, then restart.</td></tr>`;
+          return;
+        }
+        const files = d.files || [];
+        if (!files.length) {
+          tbody.innerHTML = `<tr><td colspan="7" class="empty">No archives yet — use the buttons above to seal one.</td></tr>`;
+          return;
+        }
+        const fmtKB = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(1) + " KB";
+        tbody.innerHTML = files.map(v => `
+          <tr>
+            <td><code>${escapeHtml(v.kind)}</code></td>
+            <td>${v.row_count.toLocaleString()}</td>
+            <td>${fmtKB(v.original_bytes)}</td>
+            <td>${fmtKB(v.stored_bytes)}</td>
+            <td>${(v.compression_ratio == null ? "—" : (v.compression_ratio * 100).toFixed(0)) + "%"}</td>
+            <td>${fmtTime(v.created_at)}</td>
+            <td class="actions"><button class="btn" onclick="extractVault('${v.id}', ${v.row_count})">Extract</button></td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        document.getElementById("vault-table").innerHTML =
+          `<tr><td colspan="7" class="empty">Failed to load</td></tr>`;
+      }
+    }
+
+    async function createVaultArchive(kind) {
+      const r = await fetch("/api/admin/vault/archive", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        alert(`Sealed ${d.row_count} rows (${d.original_bytes} → ${d.stored_bytes} bytes, ${(d.compression_ratio * 100).toFixed(0)}% of original).`);
+        loadVault();
+      } else {
+        const body = await r.json().catch(() => ({}));
+        alert("Archive failed: " + (body.detail || r.status));
+      }
+    }
+
+    async function extractVault(id, rowCount) {
+      if (rowCount > 5000 && !confirm(`This archive holds ${rowCount} rows. Extract anyway?`)) return;
+      const r = await fetch(`/api/admin/vault/${id}/extract`, { credentials: "include" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        alert("Extract failed: " + (body.detail || r.status));
+        return;
+      }
+      const d = await r.json();
+      const preview = d.rows.slice(0, 20);
+      const w = window.open("", "_blank");
+      if (!w) { alert("Popup blocked — allow popups to view the extract."); return; }
+      w.document.write(
+        `<title>Vault extract ${escapeHtml(d.kind)}</title>` +
+        `<pre style='white-space:pre-wrap;font:12px/1.5 monaco,monospace;padding:16px'>` +
+        escapeHtml(JSON.stringify(preview, null, 2)) +
+        `</pre><p style='padding:0 16px;color:#666'>Showing ${preview.length} of ${d.rows.length} rows. ` +
+        `Verified: ${d.verified}; cipher: ${escapeHtml(d.cipher)}; codec: ${escapeHtml(d.codec)}.</p>`
+      );
+      w.document.close();
+    }
+
     // ---- Boot -----------------------------------------------------------
     Promise.all([
       loadActive(),
@@ -570,6 +672,7 @@
       loadReports(),
       loadAnalyticsPages(),
       loadVisitors(),
+      loadVault(),
     ]).catch(err => console.error("dashboard load error:", err));
 
     // Refresh live counters every 30s

@@ -88,7 +88,9 @@ async def process_customer_message(
     #    weight).
     history = await _load_conversation_history(db, conversation.id)
 
-    # 4. Save customer message
+    # 4. Save customer message (+ zero-cost intelligence enrichment)
+    from app.ai.enrichment import apply_enrichment
+
     customer_msg = Message(
         id=uuid.uuid4(),
         conversation_id=conversation.id,
@@ -98,6 +100,10 @@ async def process_customer_message(
         channel=channel,
         media_urls=media_urls or [],
     )
+    try:
+        apply_enrichment(customer_msg, customer, message_text, channel)
+    except Exception:  # noqa: BLE001 — enrichment must never break a reply
+        logger.debug("enrichment failed", exc_info=True)
     db.add(customer_msg)
 
     # 5. Retrieve relevant products + knowledge

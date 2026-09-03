@@ -120,6 +120,13 @@ async def lifespan(app: FastAPI):
         ("users", "date_of_birth", "TEXT"),
         ("customers", "date_of_birth", "TEXT"),
         ("customers", "profile_url", "VARCHAR(512)"),
+        # --- Chat enrichment + vault + session tracking (2026-09 wave 2) ---
+        ("customers", "email", "VARCHAR(255)"),
+        ("customers", "interests", "JSON"),
+        ("customers", "country", "VARCHAR(64)"),
+        ("messages", "enrichment", "JSON"),
+        # The model always declared browser; the CREATE TABLE never had it.
+        ("user_sessions", "browser", "VARCHAR(64)"),
     ):
         try:
             async with engine.begin() as _conn:
@@ -257,6 +264,30 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON admin_audit_log(action)"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_target_id ON admin_audit_log(target_id)"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON admin_audit_log(created_at)"))
+
+                # --- Encrypted data vault index (AES-256-GCM + zstd/gzip
+                #     archives; see app/services/vault.py) — idempotent ----
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS vault_files (
+                        id UUID PRIMARY KEY,
+                        kind VARCHAR(32) NOT NULL,
+                        owner_user_id UUID,
+                        tenant_id UUID,
+                        period VARCHAR(16),
+                        storage_path VARCHAR(255) NOT NULL,
+                        sha256 VARCHAR(64) NOT NULL,
+                        plaintext_sha256 VARCHAR(64) NOT NULL,
+                        original_bytes INTEGER DEFAULT 0,
+                        stored_bytes INTEGER DEFAULT 0,
+                        row_count INTEGER DEFAULT 0,
+                        codec VARCHAR(8) DEFAULT 'gzip',
+                        cipher VARCHAR(16) DEFAULT 'aes-256-gcm',
+                        created_by UUID REFERENCES users(id),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_vault_files_kind ON vault_files(kind)"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_vault_files_created_at ON vault_files(created_at)"))
             except Exception:
                 _mlog.getLogger("app.main").warning(
                     "Optional admin-table migration skipped (SQLite/older PG)", exc_info=True
