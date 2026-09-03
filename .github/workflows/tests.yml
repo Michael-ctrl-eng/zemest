@@ -1,0 +1,68 @@
+name: tests
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: repos/zemest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Install dependencies
+        # requirements-lean.txt = the canonical runtime set minus optional
+        # heavy-ML deps (torch+CUDA via camel-tools etc.) that all have
+        # lazy-import fallbacks — the same profile local dev tests run
+        # against. Production installs the full requirements.txt (docker
+        # build). Test runners ride on top of it.
+        run: |
+          uv venv .venv
+          uv pip install -r requirements-lean.txt --python .venv
+          # Pinned to the same major/minor the local dev venv validates
+          # against: pytest-asyncio 1.x changed event_loop fixture
+          # semantics (breaks the conftest's session-scoped loop).
+          uv pip install "pytest>=8.3,<9" "pytest-asyncio>=0.25,<0.26" "pytest-timeout>=2.4" --python .venv
+      - name: Run test suite
+        # SQLite test DB; rate limits disabled for determinism (same flags
+        # the local dev workflow uses). 709+ tests, ~3 min.
+        run: env -u DATABASE_URL RATELIMIT_ENABLED=false .venv/bin/python -m pytest -q --timeout=180 --timeout-method=thread -p no:cacheprovider
+        env:
+          APP_ENV: development
+
+  frontend:
+    name: frontend (next build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Production build
+        run: bun run build
+      - name: Smoke-test the client bundle for leaked secrets
+        # Belt-and-braces next to tests/security/test_no_client_secrets.py:
+        # scan the BUILT output (not just the source) for key-shaped
+        # strings — a secret that only appears after compilation is caught
+        # here, before deploy.
+        run: |
+          if grep -rE "sk-[A-Za-z0-9]{16,}|sk-or-v1-|gsk_[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{20,}|ghp_[A-Za-z0-9]{20,}" .next/static .next/standalone 2>/dev/null; then
+            echo "::error::key-shaped string found in the client bundle"
+            exit 1
+          fi
+          echo "client bundle clean"

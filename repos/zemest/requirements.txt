@@ -91,3 +91,8 @@ python-dateutil>=2.9.0.post0
 
 # SQLite vector search (optional loadable extension; guarded load)
 sqlite-vec>=0.1.9
+
+# First-party analytics: raw event batches are zstd-compressed before
+# Fernet encryption (stdlib zlib is the automatic fallback when this is
+# absent — analytics keeps working, just ~2-3x larger/slower blobs).
+zstandard>=0.23.0

@@ -174,6 +174,14 @@
         <div class="label">Countries</div>
         <div class="value" id="countries-count">—</div>
       </div>
+      <div class="stat-card">
+        <div class="label">Open Reports</div>
+        <div class="value" id="open-reports-count">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Analytics Events (14d)</div>
+        <div class="value" id="analytics-events-count">—</div>
+      </div>
     </div>
 
     <!-- Geo map -->
@@ -237,6 +245,67 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Support reports (merchant dashboard "Report" section → here) -->
+    <div class="panel">
+      <h2>Support Reports</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>From</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="reports-table">
+          <tr><td colspan="6" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Site analytics: worst-engaging pages ("what sucks") -->
+    <div class="panel">
+      <h2>Site Analytics — Weakest Pages (14 days)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Path</th>
+            <th>Views</th>
+            <th>Clicks</th>
+            <th>Avg Scroll</th>
+            <th>Bounce</th>
+            <th>Engagement</th>
+          </tr>
+        </thead>
+        <tbody id="analytics-pages-table">
+          <tr><td colspan="6" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Site analytics: recent visitors -->
+    <div class="panel">
+      <h2>Recent Visitors</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Last IP</th>
+            <th>Location</th>
+            <th>Device</th>
+            <th>Pages</th>
+            <th>Interests</th>
+            <th>Last Seen</th>
+          </tr>
+        </thead>
+        <tbody id="visitors-table">
+          <tr><td colspan="7" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </main>
 
   <script>
@@ -270,8 +339,8 @@
     // ---- Loaders --------------------------------------------------------
     async function loadActive() {
       try {
-        const d = await fetchJSON("/api/admin/analytics/active-users");
-        document.getElementById("active-count").textContent = d.active_count;
+        const d = await fetchJSON("/api/admin/analytics/active-sessions");
+        document.getElementById("active-count").textContent = Array.isArray(d) ? d.length : 0;
       } catch (e) {
         document.getElementById("active-count").textContent = "—";
       }
@@ -280,12 +349,11 @@
     async function loadGeo() {
       try {
         const d = await fetchJSON("/api/admin/analytics/geo-distribution");
-        document.getElementById("countries-count").textContent =
-          d.distribution.length;
+        const dist = Array.isArray(d) ? d : [];
+        document.getElementById("countries-count").textContent = dist.length;
 
-        // Plot markers at country centroids (approximate). Uses lat/lon if
-        // we ever add per-country centroids; for now show a count overlay.
-        const summary = d.distribution.slice(0, 10).map(
+        // Count overlay popup (top 10 countries by user count).
+        const summary = dist.slice(0, 10).map(
           (e) => `${e.country || "Unknown"}: ${e.user_count}`
         ).join("<br>");
         if (summary) {
@@ -337,12 +405,13 @@
     async function loadAudit() {
       try {
         const d = await fetchJSON("/api/admin/audit-log?page=1&page_size=25");
+        const items = d.logs || d.items || [];
         const tbody = document.getElementById("audit-table");
-        if (!d.items.length) {
+        if (!items.length) {
           tbody.innerHTML = `<tr><td colspan="5" class="empty">No audit entries yet</td></tr>`;
           return;
         }
-        tbody.innerHTML = d.items.map(a => `
+        tbody.innerHTML = items.map(a => `
           <tr>
             <td>${fmtTime(a.created_at)}</td>
             <td><code>${escapeHtml(a.admin_id)}</code></td>
@@ -358,17 +427,18 @@
     }
 
     async function loadBlocked() {
-      // The blocked users list isn't a dedicated endpoint — fetch via audit
-      // log filter for "block_user" actions and show recent ones.
+      // Blocked users via the audit log's "user.block" actions (the action
+      // string written by POST /api/admin/users/{id}/block).
       try {
-        const d = await fetchJSON("/api/admin/audit-log?page=1&page_size=10&action=block_user");
+        const d = await fetchJSON("/api/admin/audit-log?page=1&page_size=10&action=user.block");
+        const items = d.logs || d.items || [];
         const tbody = document.getElementById("blocked-table");
         document.getElementById("blocked-count").textContent = d.total;
-        if (!d.items.length) {
+        if (!items.length) {
           tbody.innerHTML = `<tr><td colspan="5" class="empty">No blocked users</td></tr>`;
           return;
         }
-        tbody.innerHTML = d.items.map(a => {
+        tbody.innerHTML = items.map(a => {
           const meta = a.metadata_ || {};
           return `
             <tr>
@@ -386,6 +456,110 @@
       }
     }
 
+    // ---- Support reports --------------------------------------------------
+    async function loadReports() {
+      try {
+        const d = await fetchJSON("/api/admin/reports");
+        const reports = d.reports || [];
+        const open = reports.filter(r => r.status === "open").length;
+        document.getElementById("open-reports-count").textContent = open;
+        const tbody = document.getElementById("reports-table");
+        if (!reports.length) {
+          tbody.innerHTML = `<tr><td colspan="6" class="empty">No reports yet</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = reports.slice(0, 15).map(r => {
+          const u = r.user || {};
+          const statusBadge = r.status === "resolved"
+            ? "<strong style='color:#1a7f37'>resolved</strong>"
+            : r.status === "in_review"
+              ? "<strong style='color:#8a6d00'>in review</strong>"
+              : "<strong style='color:#b42318'>open</strong>";
+          const actions = r.status === "resolved" ? "" : `
+            <button class="btn" onclick="updateReport('${r.id}', 'in_review')">Review</button>
+            <button class="btn btn-danger" onclick="updateReport('${r.id}', 'resolved')">Resolve</button>`;
+          return `
+            <tr>
+              <td><code>${escapeHtml(r.code)}</code></td>
+              <td>${escapeHtml(u.name || "—")}<br><small>${escapeHtml(u.email || "")}</small></td>
+              <td title="${escapeHtml(r.subject || "")}">${escapeHtml(r.title)}</td>
+              <td>${statusBadge}</td>
+              <td>${fmtTime(r.created_at)}</td>
+              <td class="actions">${actions}</td>
+            </tr>
+          `;
+        }).join("");
+      } catch (e) {
+        document.getElementById("reports-table").innerHTML =
+          `<tr><td colspan="6" class="empty">Failed to load</td></tr>`;
+      }
+    }
+
+    async function updateReport(id, status) {
+      const r = await fetch(`/api/admin/reports/${id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (r.ok) loadReports();
+      else alert("Failed to update report: " + r.status);
+    }
+
+    // ---- Site analytics ----------------------------------------------------
+    async function loadAnalyticsPages() {
+      try {
+        const d = await fetchJSON("/api/admin/analytics/pages?days=14&worst=true");
+        document.getElementById("analytics-events-count").textContent =
+          d.totals ? (d.totals.views + d.totals.clicks).toLocaleString() : "0";
+        const pages = d.pages || [];
+        const tbody = document.getElementById("analytics-pages-table");
+        if (!pages.length) {
+          tbody.innerHTML = `<tr><td colspan="6" class="empty">No analytics events yet — the tracker starts collecting once visitors browse the site.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = pages.slice(0, 8).map(p => `
+          <tr>
+            <td><code>${escapeHtml(p.path)}</code>${p.page_name ? `<br><small>${escapeHtml(p.page_name)}</small>` : ""}</td>
+            <td>${p.views}</td>
+            <td>${p.clicks}</td>
+            <td>${p.avg_scroll_pct == null ? "—" : p.avg_scroll_pct + "%"}</td>
+            <td>${p.bounce_rate == null ? "—" : Math.round(p.bounce_rate * 100) + "%"}</td>
+            <td>${Math.round((p.engagement || 0) * 100)}%</td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        document.getElementById("analytics-pages-table").innerHTML =
+          `<tr><td colspan="6" class="empty">Failed to load</td></tr>`;
+      }
+    }
+
+    async function loadVisitors() {
+      try {
+        const d = await fetchJSON("/api/admin/analytics/visitors?limit=10");
+        const visitors = d.visitors || [];
+        const tbody = document.getElementById("visitors-table");
+        if (!visitors.length) {
+          tbody.innerHTML = `<tr><td colspan="7" class="empty">No visitors recorded yet</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = visitors.map(v => `
+          <tr>
+            <td>${escapeHtml(v.email || "—")}</td>
+            <td><code>${escapeHtml(v.last_ip || "—")}</code></td>
+            <td>${escapeHtml([v.city, v.country].filter(Boolean).join(", ") || "—")}</td>
+            <td>${escapeHtml(v.device_type || "—")}</td>
+            <td>${v.pages_viewed}</td>
+            <td>${escapeHtml((v.interests || []).slice(0, 4).join(", ") || "—")}</td>
+            <td>${fmtTime(v.last_seen)}</td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        document.getElementById("visitors-table").innerHTML =
+          `<tr><td colspan="7" class="empty">Failed to load</td></tr>`;
+      }
+    }
+
     // ---- Boot -----------------------------------------------------------
     Promise.all([
       loadActive(),
@@ -393,6 +567,9 @@
       loadBans(),
       loadAudit(),
       loadBlocked(),
+      loadReports(),
+      loadAnalyticsPages(),
+      loadVisitors(),
     ]).catch(err => console.error("dashboard load error:", err));
 
     // Refresh live counters every 30s

@@ -199,9 +199,10 @@ async def process_customer_message(
             from app.services.plan_service import check_llm_budget
             await check_llm_budget(db, tenant, owner)
         except PlanLimitError:
+            from app.services.plan_service import effective_plan
             logger.warning(
                 "LLM budget exhausted for tenant %s (plan=%s) — holding reply",
-                tenant.id, getattr(owner, "plan", "free"),
+                tenant.id, effective_plan(owner),
             )
             return _get_quota_holding_reply()
 

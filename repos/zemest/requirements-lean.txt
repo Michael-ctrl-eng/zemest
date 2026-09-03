@@ -41,3 +41,7 @@ python-dateutil>=2.9.0.post0
 eval_type_backport==0.4.0
 sqlite-vec>=0.1.9
 itsdangerous>=2.2.0
+
+# First-party analytics blob compression (zlib fallback exists, but the
+# lean/CI profile should exercise the real codec the tests assert on)
+zstandard>=0.23.0

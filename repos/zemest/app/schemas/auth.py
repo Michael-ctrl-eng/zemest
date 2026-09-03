@@ -76,5 +76,7 @@ class UserResponse(BaseModel):
     email: str | None
     fb_user_id: str | None
     is_superadmin: bool = False
+    plan: str = "free"
+    trial: dict = {}  # {active, ends_at, days_left} — plan_service.trial_state
 
     model_config = {"from_attributes": True}

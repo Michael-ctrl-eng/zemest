@@ -115,9 +115,12 @@ async def _get_post_or_404(db: AsyncSession, tenant: Tenant, post_id: str) -> Bl
 
 
 def _blog_plan_guard(tenant: Tenant, owner: User) -> None:
-    """Blog + SEO toolkit is a Growth+ feature (see plan catalog)."""
-    from app.services.plan_service import get_limits, PlanLimitError
-    limits = get_limits(getattr(owner, "plan", "free"))
+    """Blog + SEO toolkit is a Growth+ feature (see plan catalog).
+
+    Trial-aware: a user inside their 7-day trial enjoys Growth features.
+    """
+    from app.services.plan_service import PlanLimitError, get_limits_for_user
+    limits = get_limits_for_user(owner)
     if "Blog + SEO toolkit" not in limits.features:
         raise HTTPException(
             402,

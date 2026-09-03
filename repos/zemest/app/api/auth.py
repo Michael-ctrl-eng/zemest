@@ -36,14 +36,24 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
     """Register a new account.
 
     Anti-enumeration: returns the same 202 + body whether the account was
-    created or the email is already taken. Account existence must not be
+    created, the email is already taken, or policy refused the signup
+    (disposable email / IP ceiling). Account existence must not be
     discoverable from status code, body, or response timing (the duplicate
-    path burns an equal-cost bcrypt hash).
+    and refused paths burn an equal-cost bcrypt hash).
+
+    New accounts get a 7-day trial unless their signup IP already consumed
+    one (see auth_service.register_user).
     """
+    # Client IP for trial-abuse prevention. request.client can be None under
+    # some ASGI test transports — the service treats that as "no IP" (trial
+    # still granted, IP rules inert).
+    signup_ip = None
+    if request.client and request.client.host:
+        signup_ip = request.client.host
     try:
-        await auth_service.register_user(db, req.name, req.email, req.password)
+        await auth_service.register_user(db, req.name, req.email, req.password, signup_ip=signup_ip)
         await db.commit()
-    except auth_service.EmailAlreadyRegistered:
+    except (auth_service.EmailAlreadyRegistered, auth_service.RegistrationRefused):
         # Burn the same bcrypt cost a genuine registration just paid so the
         # response timing does not leak which path executed.
         from app.utils.security import burn_password_timing
@@ -111,10 +121,14 @@ async def logout(
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(user=Depends(get_current_user)):
+    from app.services.plan_service import effective_plan, trial_state
+
     return UserResponse(
         id=str(user.id),
         name=user.name,
         email=user.email,
         fb_user_id=user.fb_user_id,
         is_superadmin=bool(user.is_superadmin),
+        plan=effective_plan(user),
+        trial=trial_state(user),
     )

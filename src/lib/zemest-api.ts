@@ -611,6 +611,37 @@ export const adminApi = {
     }),
   unblockUser: (userId: string) =>
     api.delete<{ status: string; user_id: string }>(`/admin/users/${userId}/block`),
+  // --- Site analytics (first-party click/view tracking) ---
+  analyticsPages: (days = 14, worst = true) =>
+    api.get<any>(`/admin/analytics/pages?days=${days}&worst=${worst}`),
+  analyticsVisitors: (q?: string) =>
+    api.get<any>(`/admin/analytics/visitors${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  analyticsStorage: () => api.get<any>("/admin/analytics/storage"),
+  // --- Support reports ---
+  adminReports: (status?: string) =>
+    api.get<any>(`/admin/reports${status ? `?status=${status}` : ""}`),
+  updateReport: (id: string, status: string, adminNote?: string | null) =>
+    api.patch<any>(`/admin/reports/${id}`, {
+      status,
+      admin_note: adminNote ?? null,
+    }),
+};
+
+export interface MyReport {
+  id: string;
+  code: string;
+  title: string;
+  subject: string;
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+  resolved_at: string | null;
+}
+
+export const reportsApi = {
+  list: () => api.get<MyReport[]>("/reports"),
+  create: (title: string, subject: string) =>
+    api.post<MyReport>("/reports", { title, subject }),
 };
 
 /** Human-friendly message for a thrown ApiError (403 gets a clear access-denied text). */

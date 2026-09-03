@@ -12,6 +12,8 @@ from app.models.token_usage import TokenUsage
 from app.models.admin import IPBan, UserSession, AuditLog, BlockedUser, SiteUser
 from app.models.scheduled_post import ScheduledPost, PostInsights
 from app.models.blog_post import BlogPost
+from app.models.analytics import AnalyticsBatch, AnalyticsDaily, VisitorProfile
+from app.models.report import SupportReport
 
 __all__ = [
     "User",
@@ -34,4 +36,8 @@ __all__ = [
     "ScheduledPost",
     "PostInsights",
     "BlogPost",
+    "AnalyticsBatch",
+    "AnalyticsDaily",
+    "VisitorProfile",
+    "SupportReport",
 ]

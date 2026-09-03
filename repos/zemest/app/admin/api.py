@@ -5,6 +5,7 @@ All endpoints require is_superadmin=True on the User model.
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -445,3 +446,249 @@ async def get_active_sessions(
         }
         for s in sessions
     ]
+
+
+# ============================================================
+# Site analytics (first-party click/view tracking)
+# ============================================================
+
+@router.get("/analytics/pages")
+async def analytics_pages(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(14, ge=1, le=90),
+    worst: bool = Query(True, description="Rank worst-engaging pages first"),
+    prefix: Optional[str] = Query(None, max_length=512),
+):
+    """Per-path page performance + engagement ranking ("what sucks")."""
+    from app.services import analytics_service
+
+    pages = await analytics_service.page_performance(
+        db, days=days, path_prefix=prefix, worst_first=worst
+    )
+    totals = await analytics_service.summary_totals(db, days=days, path_prefix=prefix)
+    return {"totals": totals, "pages": pages}
+
+
+@router.get("/analytics/visitors")
+async def analytics_visitors(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    q: Optional[str] = Query(None, max_length=100),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Visitor directory (IP, geo, device, interests, PII decrypted)."""
+    from app.services import analytics_service
+
+    items, total = await analytics_service.visitor_list(
+        db, query=q, limit=limit, offset=offset
+    )
+    return {"visitors": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/analytics/visitors/{visitor_id}")
+async def analytics_visitor_detail(
+    visitor_id: uuid.UUID,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full drill-down: profile + recent events + linked user & shops."""
+    from app.services import analytics_service
+
+    data = await analytics_service.visitor_detail(db, visitor_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Visitor not found")
+    return data
+
+
+@router.get("/analytics/storage")
+async def analytics_storage(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compression/storage stats for the raw event blobs."""
+    from app.services import analytics_service
+
+    return await analytics_service.storage_stats(db)
+
+
+@router.get("/analytics/export")
+async def analytics_export(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    day: str = Query(..., description="YYYY-MM-DD"),
+):
+    """Decrypt + decompress a day's raw events back to JSONL.
+
+    The "extract the data for any use" requirement: batches are stored
+    compressed+encrypted; this endpoint returns the original event stream.
+    """
+    from app.services import analytics_service
+
+    try:
+        from datetime import date as _date
+
+        parsed = _date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="day must be YYYY-MM-DD")
+
+    events = await analytics_service.read_day_events(db, parsed)
+    await _write_audit_log(db, admin, "analytics.export", "day", day)
+    await db.commit()
+    from fastapi.responses import PlainTextResponse
+
+    lines = "\n".join(
+        json.dumps(e, separators=(",", ":"), ensure_ascii=False) for e in events
+    )
+    return PlainTextResponse(
+        content=lines or "",
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="analytics-{day}.jsonl"'},
+    )
+
+
+@router.post("/analytics/compact")
+async def analytics_compact(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    day: Optional[str] = Query(None, description="YYYY-MM-DD (default: yesterday)"),
+):
+    """Merge a day's event batches into one blob (maintenance)."""
+    from datetime import date as _date, timedelta as _td
+
+    from app.services import analytics_service
+
+    if day:
+        try:
+            target = _date.fromisoformat(day)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="day must be YYYY-MM-DD")
+    else:
+        target = datetime.utcnow().date() - _td(days=1)
+
+    merged = await analytics_service.compact_day(db, target)
+    await _write_audit_log(
+        db, admin, "analytics.compact", "day", target.isoformat(), metadata={"merged": merged}
+    )
+    await db.commit()
+    return {"day": target.isoformat(), "batches_merged": merged}
+
+
+# ============================================================
+# Support reports (user dashboard → admin panel)
+# ============================================================
+
+class ReportStatusIn(BaseModel):
+    status: str
+    admin_note: Optional[str] = None
+
+
+@router.get("/reports")
+async def admin_reports(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    status: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    """All reports with full submitter context (plan, signup IP, shops)."""
+    from app.services import report_service
+
+    return await report_service.admin_list_reports(
+        db, status=status, page=page, page_size=page_size
+    )
+
+
+@router.get("/reports/{report_id}")
+async def admin_report_detail(
+    report_id: uuid.UUID,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """One report + everything about the submitter (sessions, shops, activity)."""
+    from app.services import report_service
+
+    report = await report_service.get_report(db, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    user = await db.get(User, report.user_id)
+    context = None
+    if user:
+        sessions = (
+            await db.execute(
+                select(UserSession)
+                .where(UserSession.user_id == user.id)
+                .order_by(UserSession.login_at.desc())
+                .limit(5)
+            )
+        ).scalars().all()
+        shops = int(
+            (await db.execute(
+                select(func.count(Tenant.id)).where(
+                    Tenant.owner_id == user.id, Tenant.is_active == True  # noqa: E712
+                )
+            )).scalar()
+            or 0
+        )
+        context = {
+            "name": user.name,
+            "email": user.email,
+            "plan": user.plan,
+            "signup_ip": user.signup_ip,
+            "trial_ends_at": user.trial_ends_at.isoformat() if getattr(user, "trial_ends_at", None) else None,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "shops": shops,
+            "recent_sessions": [
+                {
+                    "ip": s.ip_address,
+                    "country": s.country,
+                    "city": s.city,
+                    "device": s.device_type,
+                    "login_at": s.login_at.isoformat(),
+                }
+                for s in sessions
+            ],
+        }
+    data = {
+        "id": str(report.id),
+        "code": report.code,
+        "title": report.title,
+        "subject": report.subject,
+        "status": report.status,
+        "admin_note": report.admin_note,
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+        "resolved_at": report.resolved_at.isoformat() if report.resolved_at else None,
+        "user": context,
+    }
+    return data
+
+
+@router.patch("/reports/{report_id}")
+async def admin_update_report(
+    report_id: uuid.UUID,
+    req: ReportStatusIn,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update report status / add an internal note."""
+    from app.services import report_service
+
+    report = await report_service.get_report(db, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        await report_service.update_report_status(db, report, req.status, req.admin_note)
+    except report_service.ReportError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    await _write_audit_log(
+        db,
+        admin,
+        "report.status",
+        "report",
+        str(report.id),
+        metadata={"status": req.status},
+    )
+    await db.commit()
+    return {"id": str(report.id), "status": report.status}

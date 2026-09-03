@@ -115,6 +115,53 @@ PLANS: dict[str, PlanLimits] = {
 DEFAULT_PLAN = "free"
 
 
+# ---------------------------------------------------------------------------
+# Trial-aware plan resolution (product: 7-day free trial)
+# ---------------------------------------------------------------------------
+
+def effective_plan(user) -> str:
+    """The plan the user's limits should come from RIGHT NOW.
+
+    While a 7-day trial is active (user on the free plan with
+    ``trial_ends_at`` in the future) the account enjoys Growth-level
+    limits. Expiry is evaluated lazily here — no cron, no write — so the
+    moment the clock passes ``trial_ends_at`` every gate drops back to the
+    Free tier automatically.
+    """
+    plan = (getattr(user, "plan", None) or DEFAULT_PLAN).lower()
+    trial_end = getattr(user, "trial_ends_at", None)
+    if plan == DEFAULT_PLAN and trial_end is not None:
+        from datetime import datetime as _dt
+
+        try:
+            if trial_end.tzinfo is not None:  # naive-vs-aware safety
+                trial_end = trial_end.replace(tzinfo=None)
+        except Exception:  # noqa: BLE001
+            pass
+        if trial_end > _dt.utcnow():
+            return "growth"
+    return plan
+
+
+def trial_state(user) -> dict:
+    """Trial summary for dashboards/``/api/me``."""
+    trial_end = getattr(user, "trial_ends_at", None)
+    active = False
+    days_left = 0
+    if trial_end is not None:
+        from datetime import datetime as _dt
+
+        end = trial_end.replace(tzinfo=None) if trial_end.tzinfo is not None else trial_end
+        remaining = (end - _dt.utcnow()).total_seconds()
+        active = remaining > 0
+        days_left = max(0, min(7, int(remaining // 86_400) + (1 if remaining % 86_400 else 0)))
+    return {
+        "active": active,
+        "ends_at": trial_end.isoformat() if trial_end else None,
+        "days_left": days_left,
+    }
+
+
 def get_limits(plan: str | None) -> PlanLimits:
     return PLANS.get((plan or DEFAULT_PLAN).lower(), PLANS[DEFAULT_PLAN])
 
@@ -134,6 +181,11 @@ def plan_catalog() -> list[dict]:
         }
         for p in PLANS.values()
     ]
+
+
+def get_limits_for_user(user) -> PlanLimits:
+    """Limits for the user's EFFECTIVE plan (trial-aware)."""
+    return get_limits(effective_plan(user))
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +250,7 @@ def Conversation_id_col():
 # ---------------------------------------------------------------------------
 
 async def check_can_create_shop(db: AsyncSession, user: User) -> None:
-    limits = get_limits(getattr(user, "plan", DEFAULT_PLAN))
+    limits = get_limits_for_user(user)
     current = await count_shops(db, user)
     if current >= limits.max_shops:
         raise PlanLimitError(
@@ -216,7 +268,7 @@ async def check_can_create_shop(db: AsyncSession, user: User) -> None:
 
 async def check_message_quota(db: AsyncSession, tenant: Tenant, owner: User) -> None:
     """Raise when this tenant burned its monthly inbound-message quota."""
-    limits = get_limits(getattr(owner, "plan", DEFAULT_PLAN))
+    limits = get_limits_for_user(owner)
     current = await count_month_messages(db, tenant)
     if current >= limits.max_messages_per_month:
         raise PlanLimitError(
@@ -239,7 +291,7 @@ async def check_llm_budget(db: AsyncSession, tenant: Tenant, owner: User) -> int
     the LLM ladder had no quota, so one spamming page burned the shared
     provider budget with no ceiling.
     """
-    limits = get_limits(getattr(owner, "plan", DEFAULT_PLAN))
+    limits = get_limits_for_user(owner)
     used = await count_day_llm_tokens(db, tenant)
     if used >= limits.max_llm_tokens_per_day:
         raise PlanLimitError(
@@ -258,7 +310,8 @@ async def check_llm_budget(db: AsyncSession, tenant: Tenant, owner: User) -> int
 
 async def get_usage(db: AsyncSession, user: User) -> dict:
     """Usage vs limits for the dashboard's plan widget."""
-    limits = get_limits(getattr(user, "plan", DEFAULT_PLAN))
+    eff_plan = effective_plan(user)
+    limits = get_limits(eff_plan)
     shops = await count_shops(db, user)
 
     tenants = (await db.execute(
@@ -277,7 +330,9 @@ async def get_usage(db: AsyncSession, user: User) -> dict:
             "name": limits.name,
             "price_egp_month": limits.price_egp_month,
             "features": list(limits.features),
+            "effective": eff_plan,
         },
+        "trial": trial_state(user),
         "usage": {
             "shops": {"used": shops, "limit": limits.max_shops},
             "messages_this_month": {

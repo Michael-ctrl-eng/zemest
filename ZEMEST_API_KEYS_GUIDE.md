@@ -56,7 +56,12 @@ AI-STRATEGY.md §2 for the exact math.
 | 8 | `SMTP_*` + `NOTIFICATION_FROM_EMAIL` | Brevo (300/day) / Resend (100/day) / Gmail app-password | free tier | ⬜ for order-email alerts |
 | 9 | `ADMIN_EMAIL` + `ADMIN_PASSWORD` | you pick them | free | ✅ first admin login |
 | 10 | `POSTIZ_*` (3 vars) | your Postiz instance | free self-hosted | ⬜ optional post scheduler sidecar |
-| 11 | GitHub Actions secrets | **none needed** — CI uses the built-in `GITHUB_TOKEN` | free | — |
+| 11 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ADMIN_CHAT_ID` | @BotFather on Telegram → /newbot, then getUpdates for your chat id | free | ⬜ for instant report/alert notifications to your phone |
+| 12 | GitHub Actions secrets | **none needed** — CI uses the built-in `GITHUB_TOKEN` | free | — |
+
+**No analytics key exists and none is needed**: page-view/click analytics is
+first-party (own backend, zstd+Fernet at rest) — no third-party script, no
+GoatCounter account required anymore.
 
 Every one of these has a pre-filled slot in **`deploy/.env.example`** —
 that file is your checklist. Copy it to `deploy/.env`, fill it, done.
@@ -289,6 +294,14 @@ a streaming replica is worth it (SCALING.md §failover).
 - **A model server** — never self-host on this budget (AI-STRATEGY.md §1)
 - **Postiz for basic scheduling** — the native scheduler publishes due
   posts every 30 s with CAS guards; Postiz is the optional UI sidecar
+- **Any analytics vendor** — first-party click/view tracking ships with the
+  app: events land in your own Postgres (zstd-compressed + Fernet-encrypted
+  batches), dashboards + admin drill-down included. No key, no third-party
+  script, no client-side PII.
+- **Any AI key in the browser** — every AI call (chat/vision/voice) runs in
+  FastAPI with server-side keys; the browser only ever talks to your own
+  domain through the Next.js BFF (httpOnly cookie → Bearer). Regression
+  test: `tests/security/test_no_client_secrets.py`.
 
 ---
 
@@ -306,6 +319,12 @@ a streaming replica is worth it (SCALING.md §failover).
 - [ ] Nightly `pg_dump` cron + one restore drill
 - [ ] Uptime monitor on `/healthz`
 - [ ] Search Console + sitemap submitted
+- [ ] Browse the site once → admin dashboard shows the visit in
+      "Recent Visitors" (first-party analytics live)
+- [ ] File a test report from a merchant dashboard → admin panel "Support
+      Reports" + (if configured) the Telegram alert arrives with the code
+- [ ] Register a second account from the same IP → it must start WITHOUT
+      the 7-day trial (abuse prevention live)
 - [ ] `docker compose ... ps` all healthy; disk >20% free
 
 Fail something? `docker compose -f deploy/docker-compose.prod.yml logs

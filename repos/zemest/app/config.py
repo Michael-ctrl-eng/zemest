@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     NOTIFICATION_FROM_EMAIL: str = "noreply@zemest.ai"
 
+    # Telegram admin alerts (optional — reports/abuse notifications).
+    # Empty = fully inert; see app/services/telegram_notify.py for the
+    # one-time BotFather setup steps.
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_ADMIN_CHAT_ID: str = ""
+
     # Postiz (social media scheduler sidecar)
     POSTIZ_URL: str = "http://localhost:4007"
     POSTIZ_EMAIL: str = ""

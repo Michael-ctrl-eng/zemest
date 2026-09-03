@@ -112,6 +112,14 @@ async def lifespan(app: FastAPI):
         ("orders", "deposit_amount", "NUMERIC(12,2)"),
         ("orders", "paymob_intention_id", "VARCHAR(100)"),
         ("orders", "paymob_transaction_id", "VARCHAR(64)"),
+        # --- Trial & signup abuse prevention (users) + buyer demographics
+        # (customers) — 2026-09 product wave. TEXT for EncryptedText columns
+        # (Fernet ciphertext is ASCII); TIMESTAMP for the trial deadline.
+        ("users", "trial_ends_at", "TIMESTAMP"),
+        ("users", "signup_ip", "VARCHAR(64)"),
+        ("users", "date_of_birth", "TEXT"),
+        ("customers", "date_of_birth", "TEXT"),
+        ("customers", "profile_url", "VARCHAR(512)"),
     ):
         try:
             async with engine.begin() as _conn:

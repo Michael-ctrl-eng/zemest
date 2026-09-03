@@ -4,6 +4,7 @@ import { Inter, Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ToastContainer } from "@/components/site/toast";
+import { AnalyticsTracker } from "@/components/analytics/analytics-tracker";
 
 const inter = Inter({
   variable: "--font-geist-sans",
@@ -76,9 +77,12 @@ export default function RootLayout({
         {children}
         <Toaster />
         <ToastContainer />
-        {/* Cookieless analytics (GoatCounter, G5 pick) — inert unless
-            NEXT_PUBLIC_GOATCOUNTER_CODE is set at build time. ~4.5KB,
-            no cookies, no PII. */}
+        {/* First-party analytics: page views, clicks, scroll depth, session
+            end — beacons /api/zemest/analytics/collect through the BFF.
+            No third-party script, no cookies, no PII from the client. */}
+        <AnalyticsTracker />
+        {/* Optional hosted GoatCounter — inert unless
+            NEXT_PUBLIC_GOATCOUNTER_CODE is set at build time. */}
         {process.env.NEXT_PUBLIC_GOATCOUNTER_CODE ? (
           <Script
             data-goatcounter={`https://${process.env.NEXT_PUBLIC_GOATCOUNTER_CODE}.goatcounter.com/count`}

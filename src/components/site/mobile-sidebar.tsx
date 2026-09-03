@@ -20,6 +20,7 @@ import {
   Menu,
   X,
   ArrowLeft,
+  Flag,
 } from "lucide-react";
 
 const sidebarItems = [
@@ -34,6 +35,7 @@ const sidebarItems = [
   { label: "Style Learning", href: "/style", icon: Palette },
   { label: "Scheduler", href: "/scheduler", icon: Calendar },
   { label: "Insights", href: "/insights", icon: BarChart3 },
+  { label: "Report", href: "/reports", icon: Flag },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 

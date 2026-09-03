@@ -58,8 +58,11 @@ server.log
 # secrets & local config — NEVER commit
 .env
 .env.*
+!deploy/.env.example
+!repos/zemest/.env.example
 repos/*/.env
 repos/*/.env.*
+!repos/zemest/.env.example
 
 # python backend runtime
 repos/*/.venv
