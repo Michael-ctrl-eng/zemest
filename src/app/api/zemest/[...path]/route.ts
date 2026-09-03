@@ -48,11 +48,21 @@ async function proxy(request: NextRequest, path: string[]) {
   }
   headers.delete("cookie");
 
-  // SECURITY: strip client-supplied forwarding headers. uvicorn's
-  // ProxyHeaders middleware (trusted on loopback) rewrites request.client
-  // from X-Forwarded-For — a spoofed value lets any caller pick their own
-  // rate-limit key and brute-force auth endpoints unthrottled.
-  headers.delete("x-forwarded-for");
+  // SECURITY: forward ONLY the trusted client IP. Our edge (Caddy) appends
+  // the REAL client IP to X-Forwarded-For; anything the browser itself sent
+  // can be a lie, so we keep only the LAST entry (the hop added by our own
+  // proxy). The backend runs uvicorn --proxy-headers with a trusted allow
+  // list, so request.client becomes the real visitor — powering per-client
+  // rate limits and analytics geo. Without an XFF (local dev, no proxy) we
+  // send nothing and the backend keys on the BFF address, as before.
+  const xff = request.headers.get("x-forwarded-for");
+  const trustedClientIp = xff ? xff.split(",").pop()?.trim() : undefined;
+  if (trustedClientIp) {
+    headers.set("x-forwarded-for", trustedClientIp);
+  } else {
+    headers.delete("x-forwarded-for");
+  }
+  // Never trust client-supplied values for these:
   headers.delete("x-real-ip");
   headers.delete("x-forwarded-host");
 
