@@ -11,6 +11,10 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.token_usage import TokenUsage
 from app.models.admin import IPBan, UserSession, AuditLog, BlockedUser, SiteUser
 from app.models.scheduled_post import ScheduledPost, PostInsights
+from app.models.blog_post import BlogPost
+from app.models.analytics import AnalyticsBatch, AnalyticsDaily, VisitorProfile
+from app.models.report import SupportReport
+from app.models.vault import VaultFile
 from app.models.billing import (
     BillingPlan,
     BillingSubscription,
@@ -40,6 +44,12 @@ __all__ = [
     "SiteUser",
     "ScheduledPost",
     "PostInsights",
+    "BlogPost",
+    "AnalyticsBatch",
+    "AnalyticsDaily",
+    "VisitorProfile",
+    "SupportReport",
+    "VaultFile",
     "BillingPlan",
     "BillingSubscription",
     "BillingTransaction",

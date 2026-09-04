@@ -61,7 +61,10 @@ COMMERCE_LEXICON: dict[str, tuple[str, float]] = {
 
 JUNK_LEXICON: dict[str, tuple[str, float]] = {
     # family / personal life
-    "family": ("ماما|بابا|أمي|امي|ابويا|أختك|اخوكي|اختك|جدتي|عمك|خالتك|خالي|العيال|مراتي|جوزي|بنتي|ولادي|ولادي الصغار|أهل",
+    # NOTE: bare "أهل" was removed — it substring-matches the greeting
+    # "أهلاً" and fired +2.5 junk on the most common Egyptian commerce
+    # greeting (audit A6-M5).
+    "family": ("ماما|بابا|أمي|امي|ابويا|أختك|اخوكي|اختك|جدتي|عمك|خالتك|خالي|العيال|مراتي|جوزي|بنتي|ولادي الصغار|أهلي|أهلك|الأهل|الاهل",
                2.5),
     # social plans between friends
     "social": ("نتقابل|نتشاف|اشوفك|أشوفك|قعدة|خروجة|نخرج|الحقني|تعالى|نتكلم في الصوت|كول|عزا|الفرح|جنازة|نتغدى|نتعشى|حد يوم",
@@ -77,12 +80,78 @@ JUNK_LEXICON: dict[str, tuple[str, float]] = {
                   2.0),
 }
 
-# Laughter-only content (whole message is هههه / hhhh / lol spam)
-_LAUGHTER_RE = re.compile(r"^(?:[هh]\s*ه*|[هh]{3,}|هه+|hh+|ههه+|\b(?:lol|lmao|😂+|🤣+)\b[\s😂🤣]*)+$",
-                          re.IGNORECASE)
+# --- Laughter-only content (whole message is هههه / hhhh / lol spam) ---
+#
+# SECURITY: the previous implementation was a single alternation regex
+# `(?:[هh]\s*ه*|[هh]{3,}|هه+|hh+|...)+` whose outer `+` over
+# variable-length alternatives caused catastrophic backtracking — a
+# 20-char "هههه…" message took ~24-32 s, and this code runs on every
+# message of every conversation inside the 45 s silent-trainer job on the
+# FastAPI event loop (unauthenticated full-backend DoS; audit A6-C1).
+#
+# The replacement is a hand-rolled O(n) single-pass scanner: a message is
+# laughter iff every character is a laughter letter (ه/h), laughter emoji
+# (😂/🤣), or whitespace, with at least two laughter letters or at least one
+# laughter emoji — plus a whitespace-token fast path for lol/lmao tokens.
+_LAUGHTER_LETTERS = frozenset("هhH")
+_LAUGHTER_EMOJI = frozenset("😂🤣")
+_LAUGHTER_TRIM = "!؟.،~؟!"
+
+
+def _is_laughter_token(token: str) -> bool:
+    """True if one whitespace token is pure laughter (lol / hahaha / 😂🤣)."""
+    core = token.strip(_LAUGHTER_TRIM)
+    if not core:
+        return False
+    lowered = core.lower()
+    if lowered in ("lol", "lmao"):
+        return True
+    letters = 0
+    has_emoji = False
+    for ch in core:
+        if ch in _LAUGHTER_EMOJI:
+            has_emoji = True
+        elif ch in _LAUGHTER_LETTERS:
+            letters += 1
+        else:
+            return False
+    return letters >= 2 or has_emoji
+
+
+def is_laughter_only(text: str) -> bool:
+    """True if the whole message is laughter (هههه / hhhh / lol / 😂🤣).
+
+    Linear time, no backtracking possible. Never raises.
+    """
+    if not text or not isinstance(text, str):
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    # Fast path: whitespace-separated tokens (lol, lmao, hhhh, 😂😂)
+    tokens = stripped.split()
+    if tokens and all(_is_laughter_token(t) for t in tokens):
+        return True
+    # Char-level pass: laughter letters/emoji/whitespace only, and at least
+    # 2 letters (single "h" is not laughter) or one emoji anywhere.
+    letters = 0
+    has_emoji = False
+    for ch in stripped:
+        if ch in _LAUGHTER_EMOJI:
+            has_emoji = True
+        elif ch in _LAUGHTER_LETTERS:
+            letters += 1
+        elif ch.isspace():
+            continue
+        else:
+            return False
+    return letters >= 2 or has_emoji
+
 
 # Egyptian mobile numbers: 010/011/012/015 + 8 digits (Arabic or Latin digits)
-_PHONE_RE = re.compile(r"(?:\+?2)?01[0125]\d{8}")
+# (?<!\d) / (?!\d) guards prevent matching inside longer digit runs such as
+# order IDs and tracking numbers (audit A6-M5).
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?2)?01[0125]\d{8}(?!\d)")
 
 # Currency amounts: 250 جنيه / 250 EGP / 250LE / ٢٥٠ ج
 _CURRENCY_RE = re.compile(r"(?:\d{2,6}|[٠-٩]{2,6})\s*(?:جنيه|ج\b|EGP|LE|ج\.م|le\.|pounds?)", re.IGNORECASE)
@@ -108,15 +177,36 @@ class Classification:
     message_count: int = 0
 
 
-def _score_text(text: str, lexicon: dict[str, tuple[str, float]]) -> tuple[float, list[str]]:
-    """Score one message against a lexicon. Returns (score, fired_signal_names)."""
+def _compile_lexicon(
+    lexicon: dict[str, tuple[str, float]],
+) -> list[tuple[str, "re.Pattern[str]", float]]:
+    """Precompile a lexicon once at import (audit A6-M5: per-message
+    re-compilation of 14 patterns × messages × 400 conversations every 45 s
+    hammered the re-module cache lookup path on the event loop)."""
+    return [
+        (name, re.compile(pattern), weight)
+        for name, (pattern, weight) in lexicon.items()
+    ]
+
+
+_COMMERCE_COMPILED = _compile_lexicon(COMMERCE_LEXICON)
+_JUNK_COMPILED = _compile_lexicon(JUNK_LEXICON)
+
+
+def _score_text(
+    text: str, lexicon: list[tuple[str, "re.Pattern[str]", float]]
+) -> tuple[float, list[str]]:
+    """Score one message against a precompiled lexicon.
+
+    Returns (score, fired_signal_names).
+    """
     score = 0.0
     fired: list[str] = []
     if not text:
         return 0.0, fired
     haystack = text.lower()
-    for name, (pattern, weight) in lexicon.items():
-        if re.search(pattern, haystack):
+    for name, pattern, weight in lexicon:
+        if pattern.search(haystack):
             score += weight
             fired.append(name)
     return score, fired
@@ -160,8 +250,8 @@ def classify_messages(messages: list[dict]) -> Classification:
         if not content or not content.strip():
             continue
 
-        c_score, c_fired = _score_text(content, COMMERCE_LEXICON)
-        j_score, j_fired = _score_text(content, JUNK_LEXICON)
+        c_score, c_fired = _score_text(content, _COMMERCE_COMPILED)
+        j_score, j_fired = _score_text(content, _JUNK_COMPILED)
         # merchant-side commerce content is extra strong evidence (the page
         # is doing business in this thread, not chatting with a friend)
         multiplier = 1.3 if role in _MERCHANT_ROLES else 1.0
@@ -174,7 +264,7 @@ def classify_messages(messages: list[dict]) -> Classification:
             signal_counts[s] = signal_counts.get(s, 0) + 1
 
         stripped = content.strip()
-        if _LAUGHTER_RE.match(stripped):
+        if is_laughter_only(stripped):
             laughter_msgs += 1
             junk_score += 1.5
             signal_counts["laughter_only"] = signal_counts.get("laughter_only", 0) + 1
@@ -188,12 +278,12 @@ def classify_messages(messages: list[dict]) -> Classification:
         if _PHONE_RE.search(content):
             has_phone = True
             commerce_score += 2.5
-            signal_counts["phone_number"] = 1
+            signal_counts["phone_number"] = signal_counts.get("phone_number", 0) + 1
 
         if _CURRENCY_RE.search(content):
             has_currency = True
             commerce_score += 2.0
-            signal_counts["currency_amount"] = 1
+            signal_counts["currency_amount"] = signal_counts.get("currency_amount", 0) + 1
 
     result.merchant_participated = merchant_msgs > 0
 

@@ -10,6 +10,15 @@ Hardening (audit F1):
 * Login returns an access + refresh token pair; refresh tokens rotate on
   every use with reuse detection (see :mod:`app.models.refresh_token`).
 * Blocked users fail closed with a distinct error code.
+
+Trial & signup-abuse policy (product):
+* Every NEW registration gets a 7-day trial (Growth-level limits) — unless
+  the signup IP already consumed one (any earlier account from that IP had
+  a trial). Second accounts from the same IP register WITHOUT a trial:
+  they can still pay for a plan, they just can't farm trials.
+* Disposable/throwaway email domains are refused (anti-enum 202 in the
+  route — the account simply never gets created).
+* Hard ceiling: MAX_ACCOUNTS_PER_IP registrations per IP (configurable).
 """
 import asyncio
 import uuid
@@ -60,16 +69,85 @@ class EmailAlreadyRegistered(AuthError):
         super().__init__("email_taken", "Registration could not be completed", 409)
 
 
-async def register_user(db: AsyncSession, name: str, email: str, password: str) -> User:
+class RegistrationRefused(AuthError):
+    """Signup refused by policy (disposable email / IP account ceiling).
+
+    The route maps this to the SAME uniform 202 the register endpoint
+    already returns — an attacker probing the gate learns nothing, a legit
+    user with a real address is unaffected.
+    """
+
+    def __init__(self, code: str = "registration_refused"):
+        super().__init__(code, "Registration could not be completed", 202)
+
+
+TRIAL_DAYS = 7
+MAX_ACCOUNTS_PER_IP = 5
+
+
+async def _ip_used_trial(db: AsyncSession, ip: str | None) -> bool:
+    """True when ANY earlier account from this IP consumed a trial."""
+    if not ip:
+        return False
+    from sqlalchemy import select as _select
+
+    from app.models.user import User as _User
+
+    result = await db.execute(
+        _select(_User.id).where(_User.signup_ip == ip, _User.trial_ends_at.isnot(None)).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def _ip_account_count(db: AsyncSession, ip: str | None) -> int:
+    if not ip:
+        return 0
+    from sqlalchemy import func as _func, select as _select
+
+    from app.models.user import User as _User
+
+    result = await db.execute(
+        _select(_func.count(_User.id)).where(_User.signup_ip == ip)
+    )
+    return int(result.scalar() or 0)
+
+
+async def register_user(
+    db: AsyncSession,
+    name: str,
+    email: str,
+    password: str,
+    signup_ip: str | None = None,
+) -> User:
     """Create a new user.
 
     Raises :class:`EmailAlreadyRegistered` on the unique-constraint violation
     (race-safe: the DB constraint, not a prior SELECT, is the source of truth).
+    Raises :class:`RegistrationRefused` for disposable emails or when the
+    signup IP exceeds the account ceiling.
+
+    Trial rules: 7-day trial unless the IP already consumed one.
     """
+    from app.utils.disposable_email import is_disposable_email
+
+    if is_disposable_email(email):
+        raise RegistrationRefused("disposable_email")
+
+    if signup_ip and await _ip_account_count(db, signup_ip) >= MAX_ACCOUNTS_PER_IP:
+        raise RegistrationRefused("ip_account_ceiling")
+
+    # One trial per signup IP (product requirement). NULL = no trial.
+    if await _ip_used_trial(db, signup_ip):
+        trial_ends_at = None
+    else:
+        trial_ends_at = datetime.utcnow() + timedelta(days=TRIAL_DAYS)
+
     user = User(
         id=uuid.uuid4(),
         name=name,
         email=email,
+        signup_ip=signup_ip,
+        trial_ends_at=trial_ends_at,
         # bcrypt off the event loop (it measures ~250ms of pure CPU).
         hashed_password=await asyncio.to_thread(hash_password, password),
     )
@@ -111,11 +189,14 @@ def _jti_of(token: str) -> str:
     return str(payload.get("jti", ""))
 
 
-async def login_user(db: AsyncSession, email: str, password: str) -> dict:
+async def login_user(db: AsyncSession, email: str, password: str, request=None) -> dict:
     """Verify credentials and return a token pair.
 
     Timing-equalized: unknown emails still pay the full bcrypt cost.
     Blocked accounts are rejected before any token is minted.
+    When ``request`` is passed, a session row (IP/geo/device/browser) is
+    recorded best-effort for the admin analytics screens (audit F19: the
+    ``user_sessions`` table existed but was never populated).
     """
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
@@ -130,6 +211,13 @@ async def login_user(db: AsyncSession, email: str, password: str) -> dict:
 
     if user.is_blocked:
         raise AccountBlocked()
+
+    if request is not None:
+        try:
+            from app.services.session_tracking import record_user_session
+            await record_user_session(db, user, request)
+        except Exception:  # noqa: BLE001 — tracking must never block login
+            pass
 
     return await issue_token_pair(db, user)
 

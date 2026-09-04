@@ -1,0 +1,36 @@
+# Frontend build context (Dockerfile.web) — exclude everything the Next.js
+# build does not need: the whole backend lives in its own image built from
+# repos/zemest/Dockerfile, git history is huge, and .env files must NEVER
+# ride inside an image.
+
+.git
+.github
+.hypothesis
+.next
+node_modules
+bun.lockb
+
+# backend (own image + context)
+repos/
+
+# ops / non-build directories
+deploy/
+analysis/
+examples/
+identity-raw/
+mini-services/
+scripts/
+tool-results/
+download/
+tests/
+worklog.md
+
+# docs — not compiled
+*.md
+!src/**/*.md
+
+# secrets & local state
+.env
+.env.*
+*.db
+*.sqlite*

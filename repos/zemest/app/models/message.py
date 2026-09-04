@@ -24,6 +24,10 @@ class Message(Base):
     # True when the reply is a canned LLM-unavailable apology. Both style
     # pipelines skip these so the agent never "learns" its own failures.
     is_fallback: Mapped[Optional[bool]] = mapped_column(default=False, server_default="0")
+    # --- Auto-enrichment (app/ai/enrichment.py): sentiment, intent, topics,
+    #     detected entities (phone/age/governorate/interests) and the
+    #     when/where context of the message. Written server-side only. ---
+    enrichment: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
 
     conversation = relationship("Conversation", back_populates="messages")

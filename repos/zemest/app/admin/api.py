@@ -5,6 +5,7 @@ All endpoints require is_superadmin=True on the User model.
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -445,3 +446,511 @@ async def get_active_sessions(
         }
         for s in sessions
     ]
+
+
+# ============================================================
+# Site analytics (first-party click/view tracking)
+# ============================================================
+
+@router.get("/analytics/pages")
+async def analytics_pages(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(14, ge=1, le=90),
+    worst: bool = Query(True, description="Rank worst-engaging pages first"),
+    prefix: Optional[str] = Query(None, max_length=512),
+):
+    """Per-path page performance + engagement ranking ("what sucks")."""
+    from app.services import analytics_service
+
+    pages = await analytics_service.page_performance(
+        db, days=days, path_prefix=prefix, worst_first=worst
+    )
+    totals = await analytics_service.summary_totals(db, days=days, path_prefix=prefix)
+    return {"totals": totals, "pages": pages}
+
+
+@router.get("/analytics/visitors")
+async def analytics_visitors(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    q: Optional[str] = Query(None, max_length=100),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Visitor directory (IP, geo, device, interests, PII decrypted)."""
+    from app.services import analytics_service
+
+    items, total = await analytics_service.visitor_list(
+        db, query=q, limit=limit, offset=offset
+    )
+    return {"visitors": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/analytics/visitors/{visitor_id}")
+async def analytics_visitor_detail(
+    visitor_id: uuid.UUID,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full drill-down: profile + recent events + linked user & shops."""
+    from app.services import analytics_service
+
+    data = await analytics_service.visitor_detail(db, visitor_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Visitor not found")
+    return data
+
+
+@router.get("/analytics/storage")
+async def analytics_storage(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compression/storage stats for the raw event blobs."""
+    from app.services import analytics_service
+
+    return await analytics_service.storage_stats(db)
+
+
+@router.get("/analytics/export")
+async def analytics_export(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    day: str = Query(..., description="YYYY-MM-DD"),
+):
+    """Decrypt + decompress a day's raw events back to JSONL.
+
+    The "extract the data for any use" requirement: batches are stored
+    compressed+encrypted; this endpoint returns the original event stream.
+    """
+    from app.services import analytics_service
+
+    try:
+        from datetime import date as _date
+
+        parsed = _date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="day must be YYYY-MM-DD")
+
+    events = await analytics_service.read_day_events(db, parsed)
+    await _write_audit_log(db, admin, "analytics.export", "day", day)
+    await db.commit()
+    from fastapi.responses import PlainTextResponse
+
+    lines = "\n".join(
+        json.dumps(e, separators=(",", ":"), ensure_ascii=False) for e in events
+    )
+    return PlainTextResponse(
+        content=lines or "",
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="analytics-{day}.jsonl"'},
+    )
+
+
+@router.post("/analytics/compact")
+async def analytics_compact(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    day: Optional[str] = Query(None, description="YYYY-MM-DD (default: yesterday)"),
+):
+    """Merge a day's event batches into one blob (maintenance)."""
+    from datetime import date as _date, timedelta as _td
+
+    from app.services import analytics_service
+
+    if day:
+        try:
+            target = _date.fromisoformat(day)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="day must be YYYY-MM-DD")
+    else:
+        target = datetime.utcnow().date() - _td(days=1)
+
+    merged = await analytics_service.compact_day(db, target)
+    await _write_audit_log(
+        db, admin, "analytics.compact", "day", target.isoformat(), metadata={"merged": merged}
+    )
+    await db.commit()
+    return {"day": target.isoformat(), "batches_merged": merged}
+
+
+# ============================================================
+# Support reports (user dashboard → admin panel)
+# ============================================================
+
+class ReportStatusIn(BaseModel):
+    status: str
+    admin_note: Optional[str] = None
+
+
+@router.get("/reports")
+async def admin_reports(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    status: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    """All reports with full submitter context (plan, signup IP, shops)."""
+    from app.services import report_service
+
+    return await report_service.admin_list_reports(
+        db, status=status, page=page, page_size=page_size
+    )
+
+
+@router.get("/reports/{report_id}")
+async def admin_report_detail(
+    report_id: uuid.UUID,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """One report + everything about the submitter (sessions, shops, activity)."""
+    from app.services import report_service
+
+    report = await report_service.get_report(db, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    user = await db.get(User, report.user_id)
+    context = None
+    if user:
+        sessions = (
+            await db.execute(
+                select(UserSession)
+                .where(UserSession.user_id == user.id)
+                .order_by(UserSession.login_at.desc())
+                .limit(5)
+            )
+        ).scalars().all()
+        shops = int(
+            (await db.execute(
+                select(func.count(Tenant.id)).where(
+                    Tenant.owner_id == user.id, Tenant.is_active == True  # noqa: E712
+                )
+            )).scalar()
+            or 0
+        )
+        context = {
+            "name": user.name,
+            "email": user.email,
+            "plan": user.plan,
+            "signup_ip": user.signup_ip,
+            "trial_ends_at": user.trial_ends_at.isoformat() if getattr(user, "trial_ends_at", None) else None,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "shops": shops,
+            "recent_sessions": [
+                {
+                    "ip": s.ip_address,
+                    "country": s.country,
+                    "city": s.city,
+                    "device": s.device_type,
+                    "login_at": s.login_at.isoformat(),
+                }
+                for s in sessions
+            ],
+        }
+    data = {
+        "id": str(report.id),
+        "code": report.code,
+        "title": report.title,
+        "subject": report.subject,
+        "status": report.status,
+        "admin_note": report.admin_note,
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+        "resolved_at": report.resolved_at.isoformat() if report.resolved_at else None,
+        "user": context,
+    }
+    return data
+
+
+@router.patch("/reports/{report_id}")
+async def admin_update_report(
+    report_id: uuid.UUID,
+    req: ReportStatusIn,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update report status / add an internal note."""
+    from app.services import report_service
+
+    report = await report_service.get_report(db, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        await report_service.update_report_status(db, report, req.status, req.admin_note)
+    except report_service.ReportError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    await _write_audit_log(
+        db,
+        admin,
+        "report.status",
+        "report",
+        str(report.id),
+        metadata={"status": req.status},
+    )
+    await db.commit()
+    return {"id": str(report.id), "status": report.status}
+
+
+# ============================================================
+# Encrypted data vault (chat / profile archives)
+# ============================================================
+
+from app.models.vault import VaultFile  # noqa: E402 — local import kept last
+from app.services import vault as vault_service  # noqa: E402
+
+
+class VaultArchiveIn(BaseModel):
+    kind: str  # user_profiles | customer_profiles | chat_archive
+    tenant_id: Optional[str] = None
+
+
+@router.get("/vault")
+async def admin_list_vault(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+    kind: Optional[str] = None,
+):
+    """Index of encrypted vault archives (metadata only — never plaintext)."""
+    query = select(VaultFile).order_by(VaultFile.created_at.desc())
+    if kind:
+        query = query.where(VaultFile.kind == kind)
+    rows = (await db.execute(query.limit(200))).scalars().all()
+    return {
+        "available": vault_service.vault_available(),
+        "codec": "zstd" if vault_service._ZSTD_OK else "gzip",
+        "files": [
+            {
+                "id": str(v.id),
+                "kind": v.kind,
+                "period": v.period,
+                "tenant_id": str(v.tenant_id) if v.tenant_id else None,
+                "row_count": v.row_count,
+                "original_bytes": v.original_bytes,
+                "stored_bytes": v.stored_bytes,
+                "codec": v.codec,
+                "cipher": v.cipher,
+                "sha256": v.sha256,
+                "compression_ratio": round(v.stored_bytes / max(1, v.original_bytes), 4),
+                "created_at": v.created_at.isoformat() if v.created_at else None,
+            }
+            for v in rows
+        ],
+    }
+
+
+@router.post("/vault/archive", status_code=201)
+async def admin_create_vault_archive(
+    req: VaultArchiveIn,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Build + seal a new encrypted archive from live data.
+
+    Kinds: chat_archive (full conversations incl. enrichment + customer
+    profiles), customer_profiles (buyer intelligence), user_profiles
+    (accounts + sessions + trial state).
+    """
+    if req.kind not in ("user_profiles", "customer_profiles", "chat_archive"):
+        raise HTTPException(status_code=422, detail="Unknown archive kind")
+
+    if not vault_service.vault_available():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Vault is not configured: set VAULT_MASTER_KEY (32-byte hex) "
+                "in the server environment to enable encrypted archives."
+            ),
+        )
+
+    tenant_uuid = None
+    if req.tenant_id:
+        try:
+            tenant_uuid = uuid.UUID(req.tenant_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid tenant id")
+
+    records = await _collect_vault_records(db, req.kind, tenant_uuid)
+    if not records:
+        raise HTTPException(status_code=404, detail="No records matched this archive request")
+
+    try:
+        vf = await vault_service.archive_records(
+            db, req.kind, records, tenant_id=tenant_uuid, created_by=admin.id
+        )
+    except vault_service.VaultError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    await _write_audit_log(
+        db, admin, "vault.archive", "vault", str(vf.id),
+        metadata={"kind": req.kind, "rows": vf.row_count},
+    )
+    await db.commit()
+    return {
+        "id": str(vf.id),
+        "kind": vf.kind,
+        "row_count": vf.row_count,
+        "original_bytes": vf.original_bytes,
+        "stored_bytes": vf.stored_bytes,
+        "compression_ratio": round(vf.stored_bytes / max(1, vf.original_bytes), 4),
+    }
+
+
+async def _collect_vault_records(
+    db: AsyncSession, kind: str, tenant_uuid: Optional[uuid.UUID]
+) -> list[dict]:
+    """Assemble the record sets that go into encrypted archives."""
+    if kind == "user_profiles":
+        rows = (await db.execute(
+            select(User).order_by(User.created_at.desc()).limit(5000)
+        )).scalars().all()
+        sessions = (await db.execute(
+            select(UserSession).order_by(UserSession.login_at.desc()).limit(20000)
+        )).scalars().all()
+        sessions_by_user: dict = {}
+        for s in sessions:
+            sessions_by_user.setdefault(str(s.user_id), []).append(
+                {
+                    "ip": s.ip_address,
+                    "country": s.country,
+                    "city": s.city,
+                    "device_type": s.device_type,
+                    "browser": s.browser,
+                    "login_at": s.login_at.isoformat() if s.login_at else None,
+                }
+            )
+        tenant_counts = dict((await db.execute(
+            select(Tenant.owner_id, func.count(Tenant.id)).group_by(Tenant.owner_id)
+        )).all())
+        return [
+            {
+                "user_id": str(u.id),
+                "name": u.name,
+                "email": u.email,
+                "dob": u.date_of_birth,
+                "plan": u.plan,
+                "trial_ends_at": u.trial_ends_at.isoformat() if u.trial_ends_at else None,
+                "signup_ip": u.signup_ip,
+                "is_superadmin": bool(u.is_superadmin),
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "recent_sessions": sessions_by_user.get(str(u.id), [])[:50],
+                "tenants_count": int(tenant_counts.get(u.id, 0)),
+            }
+            for u in rows
+        ]
+
+    if kind == "customer_profiles":
+        from app.models.customer import Customer
+
+        query = select(Customer).order_by(Customer.created_at.desc()).limit(5000)
+        if tenant_uuid is not None:
+            query = query.where(Customer.tenant_id == tenant_uuid)
+        rows = (await db.execute(query)).scalars().all()
+        return [
+            {
+                "customer_id": str(c.id),
+                "tenant_id": str(c.tenant_id),
+                "name": c.name,
+                "phone": c.phone,
+                "email": c.email,
+                "dob": c.date_of_birth,
+                "interests": c.interests,
+                "profile_url": c.profile_url,
+                "channel": c.channel,
+                "governorate": c.governorate,
+                "city": c.city,
+                "area": c.area,
+                "address_detail": c.address_detail,
+                "country": c.country,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in rows
+        ]
+
+    if kind == "chat_archive":
+        from app.models.conversation import Conversation
+        from app.models.customer import Customer
+        from app.models.message import Message
+
+        conv_query = select(Conversation).order_by(Conversation.last_message_at.desc()).limit(2000)
+        if tenant_uuid is not None:
+            conv_query = conv_query.where(Conversation.tenant_id == tenant_uuid)
+        conversations = (await db.execute(conv_query)).scalars().all()
+
+        customers = {
+            str(c.id): c
+            for c in (await db.execute(select(Customer))).scalars().all()
+        }
+        records = []
+        for conv in conversations:
+            customer = customers.get(str(conv.customer_id))
+            messages = (await db.execute(
+                select(Message)
+                .where(Message.conversation_id == conv.id)
+                .order_by(Message.created_at)
+                .limit(1000)
+            )).scalars().all()
+            records.append({
+                "conversation_id": str(conv.id),
+                "tenant_id": str(conv.tenant_id),
+                "channel": conv.channel,
+                "classification": conv.classification,
+                "started_at": conv.started_at.isoformat() if conv.started_at else None,
+                "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
+                "customer": (
+                    {
+                        "id": str(customer.id),
+                        "name": customer.name,
+                        "phone": customer.phone,
+                        "email": customer.email,
+                        "interests": customer.interests,
+                        "governorate": customer.governorate,
+                        "city": customer.city,
+                        "area": customer.area,
+                        "country": customer.country,
+                        "profile_url": customer.profile_url,
+                    }
+                    if customer
+                    else None
+                ),
+                "messages": [
+                    {
+                        "role": m.role,
+                        "content": m.content,
+                        "channel": m.channel,
+                        "created_at": m.created_at.isoformat() if m.created_at else None,
+                        "enrichment": m.enrichment,
+                        "media_urls": m.media_urls,
+                    }
+                    for m in messages
+                ],
+            })
+        return records
+
+    return []
+
+
+@router.get("/vault/{file_id}/extract")
+async def admin_extract_vault_file(
+    file_id: uuid.UUID,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Decrypt + decompress one vault archive and return its rows."""
+    vf = await db.get(VaultFile, file_id)
+    if not vf:
+        raise HTTPException(status_code=404, detail="Vault file not found")
+    try:
+        result = await vault_service.extract_records(db, vf)
+    except vault_service.VaultError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    await _write_audit_log(
+        db, admin, "vault.extract", "vault", str(file_id),
+        metadata={"kind": vf.kind, "rows": vf.row_count},
+    )
+    await db.commit()
+    return result
+
+
+# ============================================================

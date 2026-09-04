@@ -27,11 +27,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_tenant
 from app.models.tenant import Tenant
-from app.scheduling.postiz_client import get_postiz_client
+from app.scheduling.postiz_client import (
+    get_postiz_client,
+    get_postiz_client_for_tenant,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tenants/{tenant_id}/postiz", tags=["Postiz Scheduler"])
+
+
+def _require_postiz_session(tenant: Tenant):
+    """Per-tenant client; 401 when this tenant has no stored Postiz session.
+
+    SECURITY (audit A4-H1): every authenticated Postiz call uses the TENANT's
+    own persisted session token — never a shared process-wide login.
+    """
+    if not tenant.postiz_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Not logged in to Postiz — connect your scheduling account first",
+        )
+    return get_postiz_client_for_tenant(tenant)
 
 
 # ============================================================
@@ -62,23 +79,50 @@ class PostizGenerateRequest(BaseModel):
 
 @router.get("/health")
 async def postiz_health():
-    """Check if the Postiz sidecar is running and reachable."""
+    """Check if the Postiz sidecar is running and reachable.
+
+    The internal sidecar URL is not exposed (audit A4-L2).
+    """
     client = get_postiz_client()
     healthy = await client.health_check()
-    return {"healthy": healthy, "url": client.base_url}
+    return {"healthy": healthy}
 
 
 @router.post("/login")
 async def postiz_login(
     req: PostizLoginRequest,
     tenant: Tenant = Depends(get_tenant),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Login to Postiz. The JWT is stored in the PostizClient singleton."""
-    client = get_postiz_client()
+    """Log THIS tenant into Postiz with their own credentials.
+
+    The session token is persisted on the tenant row (never in the old
+    process-wide singleton — audit A4-H1) so every later Postiz call for
+    this tenant uses this tenant's session and nothing else.
+    """
+    client = get_postiz_client_for_tenant(tenant)
+    client.set_token(None)  # force a fresh login, not a stale session
     success = await client.login(req.email, req.password)
-    if not success:
+    if not success or not client.token:
         raise HTTPException(status_code=401, detail="Postiz login failed")
+
+    tenant.postiz_email = req.email
+    tenant.postiz_token = client.token
+    await db.commit()
     return {"status": "logged_in"}
+
+
+@router.post("/logout")
+async def postiz_logout(
+    tenant: Tenant = Depends(get_tenant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Forget this tenant's stored Postiz session."""
+    from app.scheduling.postiz_client import reset_tenant_client
+    reset_tenant_client(str(tenant.id))
+    tenant.postiz_token = None
+    await db.commit()
+    return {"status": "logged_out"}
 
 
 @router.get("/can-register")
@@ -97,8 +141,8 @@ async def postiz_can_register():
 async def list_postiz_integrations(
     tenant: Tenant = Depends(get_tenant),
 ):
-    """List all social accounts connected to Postiz (FB Pages, IG accounts, etc.)."""
-    client = get_postiz_client()
+    """List social accounts connected to THIS tenant's Postiz session."""
+    client = _require_postiz_session(tenant)
     integrations = await client.list_integrations()
     return {"integrations": integrations}
 
@@ -112,7 +156,7 @@ async def get_connect_url(
 
     Supported providers: facebook, instagram, instagram_standalone, x, linkedin, etc.
     """
-    client = get_postiz_client()
+    client = _require_postiz_session(tenant)
     url = await client.get_connect_url(provider)
     if not url:
         raise HTTPException(status_code=400, detail=f"Failed to get OAuth URL for {provider}")
@@ -130,9 +174,10 @@ async def create_postiz_post(
 ):
     """Create/schedule a post via Postiz.
 
-    Postiz handles the actual Graph API call to FB/IG.
+    Postiz handles the actual Graph API call to FB/IG — using THIS
+    tenant's own connected integrations only.
     """
-    client = get_postiz_client()
+    client = _require_postiz_session(tenant)
 
     # Build the Postiz post payload
     posts_payload = [{
@@ -160,11 +205,11 @@ async def list_postiz_posts(
     limit: int = Query(50, ge=1, le=200),
     filter_type: str = Query("scheduled"),
 ):
-    """List posts from Postiz.
+    """List posts from Postiz for THIS tenant's session.
 
     filter_type: 'scheduled', 'published', 'draft', 'failed'
     """
-    client = get_postiz_client()
+    client = _require_postiz_session(tenant)
     result = await client.list_posts(page=page, limit=limit, filter_type=filter_type)
 
     if result is None:
@@ -179,7 +224,7 @@ async def get_postiz_post_stats(
     tenant: Tenant = Depends(get_tenant),
 ):
     """Get statistics/insights for a specific post via Postiz."""
-    client = get_postiz_client()
+    client = _require_postiz_session(tenant)
     stats = await client.get_post_statistics(post_id)
 
     if stats is None:
@@ -193,8 +238,8 @@ async def delete_postiz_post(
     group_id: str,
     tenant: Tenant = Depends(get_tenant),
 ):
-    """Delete a post from Postiz (by group ID)."""
-    client = get_postiz_client()
+    """Delete a post from Postiz (by group ID) — in THIS tenant's session."""
+    client = _require_postiz_session(tenant)
     success = await client.delete_post(group_id)
 
     if not success:
@@ -210,7 +255,7 @@ async def reschedule_postiz_post(
     tenant: Tenant = Depends(get_tenant),
 ):
     """Reschedule a post to a new time."""
-    client = get_postiz_client()
+    client = _require_postiz_session(tenant)
     success = await client.update_post_date(post_id, new_date, action="update")
 
     if not success:
@@ -225,7 +270,7 @@ async def find_postiz_free_slot(
     integration_id: Optional[str] = Query(None),
 ):
     """Find the next free time slot for posting via Postiz."""
-    client = get_postiz_client()
+    client = _require_postiz_session(tenant)
     slot = await client.find_free_slot(integration_id)
 
     if not slot:
@@ -248,7 +293,7 @@ async def generate_postiz_posts(
     Postiz streams results — this endpoint collects them all and returns
     as a list. Falls back to our own LLM if Postiz is unavailable.
     """
-    client = get_postiz_client()
+    client = _require_postiz_session(tenant)
     results = await client.generate_posts(
         prompt=req.prompt,
         number_of_posts=req.number_of_posts,
@@ -274,9 +319,11 @@ async def generate_postiz_posts(
                 Return JSON: {{"posts": ["caption1", "caption2", ...]}}"""},
             ])
 
-            json_match = re.search(r'\{.*\}', llm_result.content, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group(0))
+            # Balanced extraction (audit A6-H3 class: greedy \{.*\} spans to
+            # the last brace and fails whenever trailing prose has a brace).
+            from app.utils.safe_json import extract_first_json_object
+            data, _s, _e = extract_first_json_object(llm_result.content)
+            if data:
                 return {"posts": data.get("posts", []), "source": "zemest_fallback"}
         except Exception as e:
             logger.error(f"Fallback caption generation failed: {e}")

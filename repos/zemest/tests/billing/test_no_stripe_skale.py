@@ -21,6 +21,9 @@ SCAN_DIRS = [
     BACKEND_ROOT / "alembic",
     BACKEND_ROOT / "docker-compose.yml",
     BACKEND_ROOT / ".env.example",
+    # The removed crypto sidecar must never come back:
+    BACKEND_ROOT.parent / "mini-services",
+    BACKEND_ROOT.parent / "deploy" / "docker-compose.prod.yml",
 ]
 SCAN_GLOBS = ("*.py", "*.yml", "*.yaml", "*.ini", "*.example")
 

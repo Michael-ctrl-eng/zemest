@@ -198,6 +198,43 @@ class TestCancelReactivate:
             await reactivate_subscription(db_session, subscription)
 
 
+class TestUserPlanBridge:
+    """Paid billing must actually unlock the platform limits (users.plan),
+    and cancel/expiry must drop back to free."""
+
+    async def test_activation_unlocks_owner_plan(
+        self, db_session, test_user, subscription, billing_plan
+    ):
+        test_user.plan = "free"
+        await db_session.commit()
+        txn = await make_pending_invoice(db_session, subscription)
+        assert await mark_invoice_paid(db_session, txn, "pay_x") is True
+        await db_session.refresh(test_user)
+        # starter (the billing_plan fixture) maps to Growth limits.
+        assert test_user.plan == "growth"
+
+    async def test_immediate_cancel_downgrades(
+        self, db_session, test_user, subscription
+    ):
+        test_user.plan = "pro"
+        await db_session.commit()
+        await cancel_subscription(db_session, subscription, immediate=True)
+        await db_session.refresh(test_user)
+        assert test_user.plan == "free"
+
+    async def test_expiry_downgrades(
+        self, db_session, test_user, subscription, billing_settings
+    ):
+        test_user.plan = "growth"
+        subscription.status = "past_due"
+        subscription.current_period_end = datetime.utcnow() - timedelta(days=10)
+        await db_session.commit()
+        stats = await billing_tick(db_session)
+        assert stats["expired"] == 1
+        await db_session.refresh(test_user)
+        assert test_user.plan == "free"
+
+
 class TestBillingTick:
     async def test_renewal_rolls_period_and_opens_invoice(
         self, db_session, subscription, billing_settings, fake_payoneer_checkout

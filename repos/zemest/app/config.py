@@ -36,8 +36,13 @@ class Settings(BaseSettings):
 
     # OpenRouter (free models)
     OPENROUTER_API_KEY: str = ""
+    # Multi-key rotation for concurrent load: comma-separated list; a key
+    # that trips a 429 is cooled down 60s and the next key is used.
+    OPENROUTER_API_KEYS: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_MODEL: str = "meta-llama/llama-4-maverick:free"
+    # Max in-flight LLM calls (queues excess instead of 429-storming).
+    LLM_MAX_CONCURRENCY: int = 8
 
     # Gemini (free: 15 RPM, 1M tokens/day)
     GEMINI_API_KEY: str = ""
@@ -46,11 +51,22 @@ class Settings(BaseSettings):
     # LLM provider selection: auto | openrouter | gemini | ollama
     LLM_PROVIDER: str = "auto"
 
+    # At-rest encryption key for channel tokens (Fernet). Empty → derived
+    # from JWT_SECRET_KEY via SHA-256 (zero-config still encrypted).
+    # Rotate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    TOKEN_ENCRYPTION_KEY: str = ""
+
     # Facebook
     FB_APP_ID: str = ""
     FB_APP_SECRET: str = ""
     FB_VERIFY_TOKEN: str = "zemest-verify-token"
-    FB_GRAPH_API_URL: str = "https://graph.facebook.com/v21.0"
+    # Graph version bump: v21.0 → v22.0 (Meta deprecates old versions ~2 yrs;
+    # v21 entered deprecation 2025). All Graph calls go through
+    # app/services/graph_client.py (Bearer-only) — one place to bump again.
+    FB_GRAPH_API_URL: str = "https://graph.facebook.com/v22.0"
+    # Origin used to build the OAuth redirect_uri in the callback (must match
+    # the /channels/oauth-url origin). Set to your public frontend origin.
+    FB_OAUTH_REDIRECT_ORIGIN: str = "https://localhost:3000"
 
     # Voice transcription (faster-whisper, local, free)
     WHISPER_MODEL: str = "small"
@@ -69,6 +85,20 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     NOTIFICATION_FROM_EMAIL: str = "noreply@zemest.ai"
 
+    # Telegram admin alerts (optional — reports/abuse notifications).
+    # Empty = fully inert; see app/services/telegram_notify.py for the
+    # one-time BotFather setup steps.
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_ADMIN_CHAT_ID: str = ""
+
+    # --- Encrypted data vault (AES-256-GCM + zstd/gzip) --------------------
+    # Archives chat histories, customer profiles and user profiles as
+    # compressed+encrypted files under VAULT_DIR (app/services/vault.py).
+    # Master key: 32-byte hex (64 chars) or base64 — generate with:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    VAULT_MASTER_KEY: str = ""
+    VAULT_DIR: str = "data/vault"
+
     # Postiz (social media scheduler sidecar)
     POSTIZ_URL: str = "http://localhost:4007"
     POSTIZ_EMAIL: str = ""
@@ -81,6 +111,13 @@ class Settings(BaseSettings):
     HUEY_ENABLED: bool = True
     HUEY_INLINE_CONSUMER: bool = True
     HUEY_SQLITE_PATH: str = "huey_queue.db"
+    # Multi-service deployments (docker-compose.prod.yml): the dedicated
+    # worker container owns the consumer. API replicas set this True so
+    # call sites ENQUEUE (durable, exactly-once) instead of checking for a
+    # local consumer and falling back to inline execution on the API loop.
+    # Requires HUEY_SQLITE_PATH to point at a file ALL services share
+    # (same docker volume). No effect in single-process mode.
+    HUEY_EXTERNAL_WORKER: bool = False
 
     # Periodic publish job (APScheduler; publishes due posts inside uvicorn).
     # Set false when an external `huey_consumer`/beat-style deployment owns it.
@@ -91,7 +128,7 @@ class Settings(BaseSettings):
     # user interaction; set false when training moves to an external worker)
     SILENT_TRAINER_INLINE_WORKER: bool = True
 
-    # Paymob online payments (Intention API — see analysis/G1-payments.md).
+    # Paymob online payments (Intention API — see docs/PAYMENTS.md (content folded into the module docstrings)).
     # COD stays the default rail; Paymob powers the deposit-to-confirm
     # (عربون) flow and full online payments. All values are env-overridable
     # and empty by default (no real keys in code).
@@ -100,6 +137,14 @@ class Settings(BaseSettings):
     PAYMOB_WEBHOOK_HMAC_SECRET: str = ""  # HMAC-SHA512 webhook signing secret
     PAYMOB_BASE_URL: str = "https://egypt.paymob.com"  # Egypt region Intention API base
     PAYMOB_CURRENCY: str = "EGP"
+    # Minimum deposit accepted for a payment intention (audit A4-L4: a
+    # 1-piaster "deposit" previously confirmed an order).
+    PAYMOB_MIN_DEPOSIT_EGP: float = 1.0
+    # Canonical public origin for outbound webhook URLs (audit A4-M3: the
+    # notification_url was built from the request Host header — a poisoned
+    # request redirected genuine Paymob callbacks to an attacker host).
+    PUBLIC_BASE_URL: str = ""
+
 
     # ------------------------------------------------------------------
     # Billing — post-legacy payment rails (billing/ subscription stack).

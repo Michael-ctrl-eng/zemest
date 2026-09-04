@@ -137,7 +137,17 @@ def huey_consumer_running() -> bool:
     ``immediate`` mode is excluded on purpose: there, calling a task runs it
     synchronously (blocking) — callers (api/crawl.py, agent.py) prefer their
     own async inline fallbacks in that case instead of a blocking call.
+
+    Two deployment shapes return True:
+
+    * single-process — the embedded consumer (HUEY_INLINE_CONSUMER) is
+      running in THIS process;
+    * multi-service — HUEY_EXTERNAL_WORKER=True announces that a dedicated
+      worker container consumes the shared queue file (HUEY_SQLITE_PATH on
+      a shared volume), so enqueueing here is safe and durable.
     """
     if huey_app.immediate:
         return False
+    if getattr(settings, "HUEY_EXTERNAL_WORKER", False):
+        return True
     return _consumer is not None and _consumer.is_running()

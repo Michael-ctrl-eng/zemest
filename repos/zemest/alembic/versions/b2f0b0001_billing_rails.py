@@ -1,7 +1,7 @@
 """billing rails: payoneer/paymob/usdc_solana (new billing architecture)
 
 Revision ID: b2f0b0001_billing_rails
-Revises: b1f0a0001_auth_hardening
+Revises: b2f0a0002_ai_core
 Create Date: 2026-09-04 00:00:00
 
 This migration introduces the Zemest billing stack with the three
@@ -36,7 +36,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'b2f0b0001_billing_rails'
-down_revision: Union[str, None] = 'b1f0a0001_auth_hardening'
+down_revision: Union[str, None] = 'b2f0a0002_ai_core'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

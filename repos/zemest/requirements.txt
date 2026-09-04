@@ -1,22 +1,24 @@
 # Core
-fastapi>=0.118.0
-uvicorn[standard]==0.34.0
-pydantic[email]>=2.10.4
-pydantic-settings>=2.7.1
+fastapi>=0.141.1
+uvicorn[standard]==0.52.4
+pydantic[email]>=2.13.5
+pydantic-settings>=2.15.0
 # starlette SessionMiddleware (app/main.py) — was transitively provided before
 itsdangerous>=2.2.0
 
 # Database
-sqlalchemy[asyncio]==2.0.36
-asyncpg==0.30.0
-alembic==1.14.1
-psycopg2-binary==2.9.11
+sqlalchemy[asyncio]==2.0.52
+asyncpg==0.31.0
+alembic==1.19.1
+psycopg2-binary==2.9.12
 
 # Auth
 # python-jose 3.4.0: fixes CVE-2024-33663 algorithm confusion + CVE-2024-33664 JWE
-python-jose[cryptography]>=3.4.0
-bcrypt>=4.1.3,<6
-python-multipart>=0.0.31
+python-jose[cryptography]>=3.5.0
+# At-rest Fernet encryption for channel tokens (direct dep — was transitive only)
+cryptography>=50.0.1,<51
+bcrypt>=5.0.0,<6
+python-multipart>=0.0.32
 
 # HTTP Client
 httpx==0.28.1
@@ -24,68 +26,73 @@ httpx==0.28.1
 # Task Queue — Huey (SQLite-native; replaces Celery+Redis which were dead
 # weight in this single-process deployment) + APScheduler for exact-time
 # periodic jobs in the uvicorn lifespan (replaces hand-rolled 30s loop).
-huey>=3.3.0  # 3.x API: filename= kwarg, thread consumer
-apscheduler>=3.11,<4.0
+huey>=3.3.4  # 3.x API: filename= kwarg, thread consumer
+apscheduler>=3.11.3,<4.0
 
 # Web Crawling & Content Extraction
-trafilatura==2.0.0
-beautifulsoup4==4.12.3
+trafilatura==2.2.0
+beautifulsoup4==4.15.0
 
 # Templating
 jinja2>=3.1.6
 
 # PageIndex (self-hosted) + LLM routing
-litellm>=1.84.0
-pyyaml>=6.0
+litellm>=1.98.0
+pyyaml>=6.0.3
 
 # Voice transcription (local, free)
-faster-whisper>=1.0.0
+faster-whisper>=1.2.1
 
 # Admin panel + security middleware
-sqladmin>=0.25.1
-slowapi>=0.1.9
-geoip2>=4.8.0
+sqladmin>=0.31.0
+slowapi>=0.1.10
+geoip2>=5.3.0
 
 # Utilities
-python-dotenv>=1.2.2
-aiofiles==24.1.0
-structlog>=24.1.0
+python-dotenv>=1.2.3
+aiofiles==25.1.0
+structlog>=26.1.0
 
 # Testing
-pytest==8.3.4
-pytest-asyncio==0.25.0
-pytest-cov==6.0.0
-aiosqlite==0.20.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+aiosqlite==0.22.1
 # Real-world simulation tests
-hypothesis>=6.100.0
-schemathesis>=3.36.0
-locust>=2.31.0
-pytest-playwright>=0.5.0
-mutmut>=3.0.0
+hypothesis>=6.167.1
+schemathesis>=4.25.2
+locust>=2.46.4
+pytest-playwright>=0.9.0
+mutmut>=3.7.0
 
 # Email
 aiosmtplib>=5.1.2
 
 # Fuzzy matching
-python-Levenshtein==0.26.1
+python-Levenshtein==0.27.4
 
 # Headless browser for JS-rendered sites
-playwright==1.58.0
+playwright==1.62.0
 
 # Multi-dialect language engine (optional — engine falls back to regex
 # detection if these are not installed, but installing them enables
 # 26-class Arabic dialect ID and GlotLID sentence-level LID).
-camel-tools>=1.5.0
+camel-tools>=1.6.0
 # numpy-2-compatible fasttext wheels (fasttext-wheel crashes on model.predict
 # under numpy 2: ValueError about memory copy)
-fasttext-numpy2-wheel>=0.1.0
+fasttext-numpy2-wheel>=0.9.2
 
 # Python 3.9 compatibility
-eval_type_backport==0.3.1
+eval_type_backport==0.4.0
 
 # Calendar (RFC-5545-compliant ICS feed: folding, RRULE, VTIMEZONE)
-icalendar>=6.0.0
-python-dateutil>=2.9.0
+icalendar>=7.3.0
+python-dateutil>=2.9.0.post0
 
 # SQLite vector search (optional loadable extension; guarded load)
-sqlite-vec>=0.1.6
+sqlite-vec>=0.1.9
+
+# First-party analytics: raw event batches are zstd-compressed before
+# Fernet encryption (stdlib zlib is the automatic fallback when this is
+# absent — analytics keeps working, just ~2-3x larger/slower blobs).
+zstandard>=0.23.0

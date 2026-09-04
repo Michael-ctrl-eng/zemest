@@ -49,10 +49,19 @@ class PostizClient:
         await client.create_post(caption="Hello!", schedule_at="2026-01-01T10:00:00Z")
     """
 
-    def __init__(self, base_url: str | None = None):
+    def __init__(self, base_url: str | None = None, token: str | None = None):
         self.base_url = base_url or POSTIZ_API_URL
-        self._token: str | None = None
+        self._token: str | None = token
         self._client: httpx.AsyncClient | None = None
+
+    @property
+    def token(self) -> str | None:
+        """Current session token (exposed so per-tenant callers can persist it)."""
+        return self._token
+
+    def set_token(self, token: str | None) -> None:
+        """Load a previously persisted session token (per-tenant sessions)."""
+        self._token = token
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the shared httpx client."""
@@ -411,15 +420,58 @@ class PostizClient:
 
 
 # ============================================================
-# Singleton client for app-wide use
+# Client management
 # ============================================================
 
+# Anonymous client for health/registration checks ONLY — never authenticated
+# API calls (audit A4-L2: its base_url is not exposed to callers anymore).
 _postiz_client: PostizClient | None = None
 
 
 def get_postiz_client() -> PostizClient:
-    """Get the singleton PostizClient instance."""
+    """Anonymous singleton — health checks and registration probes only.
+
+    SECURITY (audit A4-H1): this singleton was previously THE client for all
+    tenants — one shared session token, so any tenant's ``/login``
+    overwrote the process-wide session and the next tenant acted with it
+    (cross-tenant post deletion, posting as other tenants' pages). All
+    authenticated Postiz calls now go through
+    :func:`get_postiz_client_for_tenant`, which keys a private client per
+    tenant and loads that tenant's persisted session token.
+    """
     global _postiz_client
     if _postiz_client is None:
         _postiz_client = PostizClient()
     return _postiz_client
+
+
+# Per-tenant clients: tenant_id (str) -> PostizClient with that tenant's token.
+_tenant_clients: dict[str, PostizClient] = {}
+
+
+def get_postiz_client_for_tenant(tenant) -> PostizClient:
+    """Per-tenant Postiz client carrying ONLY this tenant's session token.
+
+    ``tenant`` is a Tenant ORM row; its ``postiz_token`` (persisted at
+    login) is loaded into the private client instance. A tenant with no
+    stored token gets a token-less client — every authenticated call then
+    fails with Postiz 401, which the API layer surfaces as "not logged in".
+    """
+    key = str(tenant.id)
+    client = _tenant_clients.get(key)
+    if client is None:
+        client = PostizClient(token=tenant.postiz_token)
+        _tenant_clients[key] = client
+    else:
+        # Refresh in case the tenant re-logged-in elsewhere in the process.
+        stored = getattr(tenant, "postiz_token", None)
+        if stored and client.token != stored:
+            client.set_token(stored)
+    return client
+
+
+def reset_tenant_client(tenant_id: str) -> None:
+    """Drop a tenant's cached client (after logout/token rotation)."""
+    client = _tenant_clients.pop(str(tenant_id), None)
+    if client is not None:
+        client.set_token(None)

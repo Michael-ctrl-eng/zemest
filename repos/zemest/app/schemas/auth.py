@@ -37,6 +37,45 @@ class RegisterRequest(BaseModel):
         return v.strip()
 
 
+class ProfileUpdateRequest(BaseModel):
+    """Optional profile info for analytics/admin views (encrypted at rest).
+
+    ``date_of_birth`` is an ISO date string (YYYY-MM-DD); the model rejects
+    malformed dates, future dates and implausible ages (under 13 / over
+    120). Identity fields (email/name) are NOT editable here — identity
+    flows from the authenticated session only.
+    """
+
+    date_of_birth: str | None = None
+
+    model_config = {
+        "json_schema_extra": {"examples": [{"date_of_birth": "1996-04-17"}]}
+    }
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def dob_valid(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        from datetime import date as _date
+
+        try:
+            parsed = _date.fromisoformat(v)
+        except ValueError:
+            raise ValueError("date_of_birth must be an ISO date (YYYY-MM-DD)")
+        today = _date.today()
+        age = today.year - parsed.year - (
+            (today.month, today.day) < (parsed.month, parsed.day)
+        )
+        if parsed > today:
+            raise ValueError("date_of_birth cannot be in the future")
+        if age < 13:
+            raise ValueError("users must be at least 13 years old")
+        if age > 120:
+            raise ValueError("date_of_birth looks implausible")
+        return v
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -76,5 +115,7 @@ class UserResponse(BaseModel):
     email: str | None
     fb_user_id: str | None
     is_superadmin: bool = False
+    plan: str = "free"
+    trial: dict = {}  # {active, ends_at, days_left} — plan_service.trial_state
 
     model_config = {"from_attributes": True}

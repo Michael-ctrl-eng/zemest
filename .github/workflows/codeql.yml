@@ -8,21 +8,26 @@ on:
     - cron: "23 2 * * 5"
 permissions:
   contents: read
-  security-events: write
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    permissions:
+      # scoped at job level: only the analyze job may upload SARIF
+      contents: read
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
         language: [python, javascript-typescript]
     steps:
-      - uses: actions/checkout@v6
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # analysis only, no git push
+      - uses: github/codeql-action/init@6f5948dfacef28e207b48d0905cf90c03365536d # v3
         with:
           languages: ${{ matrix.language }}
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/autobuild@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+      - uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d # v3
         with:
           category: "/language:${{ matrix.language }}"
 # python: buildless. javascript-typescript: autobuild installs deps;

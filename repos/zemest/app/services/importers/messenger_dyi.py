@@ -67,12 +67,25 @@ def parse_messenger_dyi_zip(zip_bytes: bytes, page_owner_names: set[str] | None 
     sender_counts: dict[str, int] = {}
 
     # First pass: collect all senders to identify the page owner
+    # Zip-bomb guard (audit A4-H3): each member's *uncompressed* size is
+    # checked before reading; a 50 MB member limit + 1 GB aggregate stops
+    # highly-compressible JSON expanding to many GB in RAM.
+    _MAX_MEMBER_BYTES = 50 * 1024 * 1024
+    _MAX_TOTAL_BYTES = 1024 * 1024 * 1024
     parsed_threads: list[dict] = []
+    total_read = 0
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             for name in zf.namelist():
                 if not name.endswith(".json") or "message_" not in name:
                     continue
+                info = zf.getinfo(name)
+                if info.file_size > _MAX_MEMBER_BYTES:
+                    logger.warning(f"Skipping oversized zip member {name} ({info.file_size} bytes)")
+                    continue
+                total_read += info.file_size
+                if total_read > _MAX_TOTAL_BYTES:
+                    raise ValueError("ZIP uncompressed content exceeds 1 GB limit")
                 try:
                     with zf.open(name) as f:
                         data = json.load(f)

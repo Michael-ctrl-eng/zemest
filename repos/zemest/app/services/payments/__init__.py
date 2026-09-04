@@ -1,4 +1,4 @@
-"""Payments gateway integrations (Paymob first — see analysis/G1-payments.md).
+"""Payments gateway integrations (Paymob first — see docs/PAYMENTS.md (content folded into the module docstrings)).
 
 Architecture rules shared by every gateway added under this package:
 

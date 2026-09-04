@@ -1,0 +1,76 @@
+# Zemest production edge — TLS + routing.
+#
+# ROUTING CONTRACT (matches the BFF design in src/app/api/**):
+#   * Browser /api/* MUST land on the Next.js BFF (web:3000) — it owns the
+#     httpOnly session cookies, CSRF/Origin checks, and Cookie→Bearer
+#     translation. Routing /api/* straight to the backend would bypass the
+#     BFF: login would return JSON instead of setting cookies, and the
+#     session middleware would never see a valid session.
+#   * Server-to-server callbacks (Meta webhooks, Paymob HMAC callbacks) have
+#     no cookies and deserve a fast lane straight to the API replicas.
+#
+# Hardening notes:
+#   * request logging ON (abuse forensics) but tokens never appear in
+#     URLs anymore (Graph calls are Bearer-header; FB endpoints take
+#     JSON bodies).
+#   * /docs, /redoc, /openapi.json are gated off at the APP level in
+#     production — nothing to hide here, defense in depth.
+#   * generous body limit: product CSV imports + image URLs.
+
+{$ZEMEST_DOMAIN} {
+	encode zstd gzip
+
+	# Body size cap — 32 MB covers CSV imports comfortably.
+	request_body {
+		max_size 32MB
+	}
+
+	# Basic abuse brakes in front of the app's own rate limiter.
+	rate_limit {
+		zone dynamic {
+			key {remote_host}
+			events 120
+			window 1m
+		}
+	}
+
+	# --- webhook fast lane: Meta (Messenger/IG/WhatsApp) retries deserve
+	# quick 2xx/4xx, no cookie processing — straight to the API replicas.
+	handle /api/webhook/* {
+		reverse_proxy api:8000 api:8000 {
+			lb_policy first_available
+			health_uri /
+			health_interval 10s
+			health_timeout 3s
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# --- Paymob HMAC callback: server-to-server, same fast-lane treatment.
+	handle /api/payments/webhook {
+		reverse_proxy api:8000 api:8000 {
+			lb_policy first_available
+			health_uri /
+			health_interval 10s
+		}
+	}
+
+	# --- ALL other /api/*: the Next.js BFF (cookies + CSRF live there; it
+	# reaches the backend over the docker network).
+	handle /api/* {
+		reverse_proxy web:3000
+	}
+
+	# --- Next.js frontend (dashboard + marketing + BFF routes)
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 100mb
+			roll_keep 10
+		}
+		format json
+	}
+}

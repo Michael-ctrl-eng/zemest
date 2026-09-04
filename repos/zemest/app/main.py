@@ -32,10 +32,109 @@ async def lifespan(app: FastAPI):
             "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\" "
             "and set it in the environment before starting the server."
         )
-    # Startup — auto-create missing tables
+    # Startup — schema bootstrap, then idempotent patches
     import logging as _mlog
     from sqlalchemy import text
     from app.database import engine
+
+    # --- Base tables first: metadata.create_all ----------------------------
+    # Production Docker has no bootstrap_local.py step; without this the
+    # patcher below ALTERs tables that don't exist (every statement silently
+    # swallowed → the app boots with an EMPTY schema while / stays "ok").
+    # create_all is checkfirst=True (idempotent); the Postgres advisory lock
+    # serializes replicas booting simultaneously (SQLite/dev: lock no-ops,
+    # single-process is safe anyway).
+    try:
+        import app.models  # noqa: F401 — full model registry for metadata
+        from app.database import Base, async_session as _boot_session_factory
+        from app.services.leader_election import try_job_lock, release_job_lock
+
+        _boot_db = _boot_session_factory()
+        try:
+            if await try_job_lock(_boot_db, "schema-bootstrap"):
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                _mlog.getLogger("app.main").info(
+                    "Schema bootstrap: create_all complete (idempotent)")
+            await release_job_lock(_boot_db, "schema-bootstrap")
+        finally:
+            await _boot_db.close()
+    except Exception:
+        _mlog.getLogger("app.main").error("Schema create_all failed", exc_info=True)
+
+    # --- Column patches: each statement in its OWN transaction --------------
+    # One big transaction poisons itself on Postgres: the first
+    # duplicate-column error aborts it and every later ALTER/index silently
+    # no-ops (audit C5 hazard). Isolated transactions make every patch
+    # independent; "duplicate column" is the expected idempotent skip.
+    for _tbl, _col, _ctype in (
+        ("orders", "payment_phone_last2", "VARCHAR(10)"),
+        ("orders", "payment_trx_id", "VARCHAR(50)"),
+        ("tenants", "delivery_inside_cairo", "NUMERIC(10,2) DEFAULT 35"),
+        ("tenants", "delivery_outside_cairo", "NUMERIC(10,2) DEFAULT 60"),
+        ("tenants", "free_delivery_above", "NUMERIC(10,2)"),
+        ("tenants", "payment_methods", "JSONB"),
+        ("tenants", "order_api_config", "JSONB"),
+        ("tenants", "style_profile", "JSONB"),
+        ("tenants", "knowledge_base", "JSONB"),
+        ("tenants", "knowledge_built_at", "TIMESTAMP"),
+        ("tenants", "ig_user_id", "VARCHAR(64)"),
+        ("tenants", "ig_access_token", "TEXT"),
+        ("tenants", "wa_phone_number_id", "VARCHAR(64)"),
+        ("tenants", "wa_access_token", "TEXT"),
+        ("tenants", "wa_waba_id", "VARCHAR(64)"),
+        ("tenants", "owner_psid", "VARCHAR(64)"),
+        ("tenants", "messenger_meta", "JSON"),
+        ("tenants", "instagram_meta", "JSON"),
+        ("tenants", "whatsapp_meta", "JSON"),
+        ("tenants", "calendar_token", "VARCHAR(64)"),
+        ("tenants", "training_state", "JSON"),
+        ("conversations", "classification", "VARCHAR(20)"),
+        ("conversations", "classification_score", "FLOAT"),
+        ("conversations", "classification_signals", "JSON"),
+        ("conversations", "classified_at", "TIMESTAMP"),
+        ("conversations", "classified_by", "VARCHAR(16)"),
+        ("customers", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
+        ("customers", "governorate", "VARCHAR(100)"),
+        ("customers", "city", "VARCHAR(100)"),
+        ("customers", "area", "VARCHAR(100)"),
+        ("customers", "address_detail", "TEXT"),
+        ("messages", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
+        ("messages", "media_urls", "JSON"),
+        ("messages", "is_fallback", "BOOLEAN DEFAULT 0"),
+        ("orders", "api_status", "VARCHAR(20)"),
+        ("orders", "api_response", "TEXT"),
+        ("orders", "api_status_code", "INTEGER"),
+        ("orders", "api_called_at", "TIMESTAMP"),
+        ("orders", "api_external_id", "VARCHAR(100)"),
+        ("users", "is_superadmin", "BOOLEAN DEFAULT FALSE"),
+        ("orders", "payment_status", "VARCHAR(30)"),
+        ("orders", "deposit_amount", "NUMERIC(12,2)"),
+        ("orders", "paymob_intention_id", "VARCHAR(100)"),
+        ("orders", "paymob_transaction_id", "VARCHAR(64)"),
+        # --- Trial & signup abuse prevention (users) + buyer demographics
+        # (customers) — 2026-09 product wave. TEXT for EncryptedText columns
+        # (Fernet ciphertext is ASCII); TIMESTAMP for the trial deadline.
+        ("users", "trial_ends_at", "TIMESTAMP"),
+        ("users", "signup_ip", "VARCHAR(64)"),
+        ("users", "date_of_birth", "TEXT"),
+        ("customers", "date_of_birth", "TEXT"),
+        ("customers", "profile_url", "VARCHAR(512)"),
+        # --- Chat enrichment + vault + session tracking (2026-09 wave 2) ---
+        ("customers", "email", "VARCHAR(255)"),
+        ("customers", "interests", "JSON"),
+        ("customers", "country", "VARCHAR(64)"),
+        ("messages", "enrichment", "JSON"),
+        # The model always declared browser; the CREATE TABLE never had it.
+        ("user_sessions", "browser", "VARCHAR(64)"),
+    ):
+        try:
+            async with engine.begin() as _conn:
+                await _conn.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_ctype}"))
+        except Exception:
+            _mlog.getLogger("app.main").debug(
+                "column patch skipped (likely exists): %s.%s", _tbl, _col)
+
     try:
         async with engine.begin() as conn:
             await conn.execute(text("""
@@ -51,60 +150,6 @@ async def lifespan(app: FastAPI):
                 )
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_token_usage_tenant ON token_usage(tenant_id)"))
-            # Add missing columns (idempotent)
-            migrations = [
-                ("orders", "payment_phone_last2", "VARCHAR(10)"),
-                ("orders", "payment_trx_id", "VARCHAR(50)"),
-                ("tenants", "delivery_inside_cairo", "NUMERIC(10,2) DEFAULT 35"),
-                ("tenants", "delivery_outside_cairo", "NUMERIC(10,2) DEFAULT 60"),
-                ("tenants", "free_delivery_above", "NUMERIC(10,2)"),
-                ("tenants", "payment_methods", "JSONB"),
-                ("tenants", "order_api_config", "JSONB"),
-                ("tenants", "style_profile", "JSONB"),
-                ("tenants", "knowledge_base", "JSONB"),
-                ("tenants", "knowledge_built_at", "TIMESTAMP"),
-                ("tenants", "ig_user_id", "VARCHAR(64)"),
-                ("tenants", "ig_access_token", "TEXT"),
-                ("tenants", "wa_phone_number_id", "VARCHAR(64)"),
-                ("tenants", "wa_access_token", "TEXT"),
-                ("tenants", "wa_waba_id", "VARCHAR(64)"),
-                ("tenants", "owner_psid", "VARCHAR(64)"),
-                ("tenants", "messenger_meta", "JSON"),
-                ("tenants", "instagram_meta", "JSON"),
-                ("tenants", "whatsapp_meta", "JSON"),
-                ("tenants", "calendar_token", "VARCHAR(64)"),
-                ("tenants", "training_state", "JSON"),
-                ("conversations", "classification", "VARCHAR(20)"),
-                ("conversations", "classification_score", "FLOAT"),
-                ("conversations", "classification_signals", "JSON"),
-                ("conversations", "classified_at", "TIMESTAMP"),
-                ("conversations", "classified_by", "VARCHAR(16)"),
-                ("customers", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
-                ("customers", "governorate", "VARCHAR(100)"),
-                ("customers", "city", "VARCHAR(100)"),
-                ("customers", "area", "VARCHAR(100)"),
-                ("customers", "address_detail", "TEXT"),
-                ("messages", "channel", "VARCHAR(20) DEFAULT 'messenger'"),
-                ("messages", "media_urls", "JSON"),
-                ("messages", "is_fallback", "BOOLEAN DEFAULT 0"),
-                ("orders", "api_status", "VARCHAR(20)"),
-                ("orders", "api_response", "TEXT"),
-                ("orders", "api_status_code", "INTEGER"),
-                ("orders", "api_called_at", "TIMESTAMP"),
-                ("orders", "api_external_id", "VARCHAR(100)"),
-                # --- Admin / security tables (idempotent) ---
-                ("users", "is_superadmin", "BOOLEAN DEFAULT FALSE"),
-                # --- Paymob online payments (deposit-to-confirm flow) ---
-                ("orders", "payment_status", "VARCHAR(30)"),
-                ("orders", "deposit_amount", "NUMERIC(12,2)"),
-                ("orders", "paymob_intention_id", "VARCHAR(100)"),
-                ("orders", "paymob_transaction_id", "VARCHAR(64)"),
-            ]
-            for table, col, coltype in migrations:
-                try:
-                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}"))
-                except Exception:
-                    pass
 
             # --- SQLite hardening: WAL + busy timeout -----------------------
             # WAL lets the silent trainer / inline scheduler commit while
@@ -219,6 +264,30 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON admin_audit_log(action)"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_target_id ON admin_audit_log(target_id)"))
                 await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON admin_audit_log(created_at)"))
+
+                # --- Encrypted data vault index (AES-256-GCM + zstd/gzip
+                #     archives; see app/services/vault.py) — idempotent ----
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS vault_files (
+                        id UUID PRIMARY KEY,
+                        kind VARCHAR(32) NOT NULL,
+                        owner_user_id UUID,
+                        tenant_id UUID,
+                        period VARCHAR(16),
+                        storage_path VARCHAR(255) NOT NULL,
+                        sha256 VARCHAR(64) NOT NULL,
+                        plaintext_sha256 VARCHAR(64) NOT NULL,
+                        original_bytes INTEGER DEFAULT 0,
+                        stored_bytes INTEGER DEFAULT 0,
+                        row_count INTEGER DEFAULT 0,
+                        codec VARCHAR(8) DEFAULT 'gzip',
+                        cipher VARCHAR(16) DEFAULT 'aes-256-gcm',
+                        created_by UUID REFERENCES users(id),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_vault_files_kind ON vault_files(kind)"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_vault_files_created_at ON vault_files(created_at)"))
             except Exception:
                 _mlog.getLogger("app.main").warning(
                     "Optional admin-table migration skipped (SQLite/older PG)", exc_info=True
@@ -357,6 +426,51 @@ async def lifespan(app: FastAPI):
         # DB may not be ready yet — but never SILENTLY: the operator must see it
         _mlog.getLogger("app.main").error("Startup migration block failed", exc_info=True)
 
+    # --- First superadmin provisioning (production bootstrap) ---------------
+    # Production deployments have no bootstrap_local.py (that script seeds
+    # DEMO accounts with printed passwords — fine for dev, never for prod).
+    # Set ADMIN_EMAIL + ADMIN_PASSWORD in the environment: on boot, IF no
+    # superadmin exists yet, this creates exactly one. It never overwrites,
+    # never promotes an existing non-admin account, and no-ops when unset.
+    try:
+        import os as _os
+        import uuid as _uuid
+        from sqlalchemy import select as _select
+        from app.database import async_session as _admin_session_factory
+        from app.models.user import User
+        from app.utils.security import hash_password
+
+        _admin_email = _os.environ.get("ADMIN_EMAIL", "").strip().lower()
+        _admin_password = _os.environ.get("ADMIN_PASSWORD", "")
+        if _admin_email and _admin_password:
+            async with _admin_session_factory() as _session:
+                _any_admin = (await _session.execute(
+                    _select(User).where(User.is_superadmin.is_(True)).limit(1)
+                )).first()
+                if _any_admin is None:
+                    _existing = (await _session.execute(
+                        _select(User).where(User.email == _admin_email)
+                    )).scalar_one_or_none()
+                    if _existing is not None:
+                        _mlog.getLogger("app.main").warning(
+                            "ADMIN_EMAIL %s exists but is not superadmin — NOT "
+                            "promoting automatically; resolve manually", _admin_email)
+                    else:
+                        _session.add(User(
+                            id=_uuid.uuid4(),
+                            email=_admin_email,
+                            hashed_password=hash_password(_admin_password),
+                            name="Platform Admin",
+                            is_superadmin=True,
+                        ))
+                        await _session.commit()
+                        _mlog.getLogger("app.main").info(
+                            "Provisioned first superadmin from ADMIN_EMAIL (%s)",
+                            _admin_email)
+    except Exception:
+        _mlog.getLogger("app.main").error(
+            "First-admin provisioning failed", exc_info=True)
+
     # --- Background jobs: APScheduler + Huey (single-process design) ------
     # Replaces the hand-rolled 30s/45s asyncio worker loops (the deleted
     # inline_worker.py / training_worker.py loops) and the dead Celery beat
@@ -368,42 +482,70 @@ async def lifespan(app: FastAPI):
 
         scheduler = AsyncIOScheduler(timezone="Africa/Cairo")
 
+        # Leader election (audit F8): with N API replicas every scheduler
+        # fires the same jobs. Each execution grabs a per-job Postgres
+        # advisory lock first — exactly one replica runs the tick, the rest
+        # skip (Postiz pattern, hardened: per-job locks instead of a
+        # leader process). SQLite/dev falls back to always-run (safe —
+        # single process + max_instances=1).
+        from app.database import async_session
+        from app.services.leader_election import try_job_lock
+
+        async def _guarded(job_name: str, fn):
+            # Lock lives on a dedicated session's connection; explicitly
+            # released + rolled back so it never lingers on a pooled conn.
+            async with async_session() as lock_db:
+                if not await try_job_lock(lock_db, job_name):
+                    return
+                try:
+                    await fn()
+                except Exception:
+                    _mlog.getLogger("app.main").error(
+                        "Job %s failed", job_name, exc_info=True
+                    )
+                finally:
+                    from app.services.leader_election import release_job_lock
+                    try:
+                        await release_job_lock(lock_db, job_name)
+                        await lock_db.rollback()
+                    except Exception:
+                        pass
+
         async def _publish_job():
             from app.tasks.scheduling_tasks import _publish_due_posts_async
-            await _publish_due_posts_async()
+            await _guarded("publish-due-posts", _publish_due_posts_async)
 
         async def _trainer_job():
             from app.tasks.training_worker import training_cycle_once
-            await training_cycle_once()
+            await _guarded("silent-trainer", training_cycle_once)
 
         async def _personality_job():
             from app.tasks.style_tasks import _rebuild_all_personalities_async
-            await _rebuild_all_personalities_async()
+            await _guarded("rebuild-personality-weekly", _rebuild_all_personalities_async)
 
         async def _billing_tick_job():
             # Monthly-cycle engine: RENEW / DUNNING / EXPIRE / USDC settle+void.
-            # Idempotent (deterministic invoice keys + CAS everywhere) so an
-            # hourly cadence is safe; N replicas each with SCHEDULER_INLINE_WORKER
-            # would double-sweep harmlessly (same keys, same CAS).
+            # Idempotent (deterministic invoice keys + CAS everywhere) so the
+            # hourly cadence is safe; the per-job advisory lock keeps N API
+            # replicas from double-sweeping.
             from app.services.billing.subscription_engine import billing_tick as _tick
             from app.database import async_session as _billing_session
-            try:
-                async with _billing_session() as _s:
-                    stats = await _tick(_s, webhook_base_url=_settings_public_base())
-                _mlog.getLogger("app.main").info("Billing tick: %s", stats)
-            except Exception:
-                _mlog.getLogger("app.main").warning("Billing tick failed", exc_info=True)
-
-        def _settings_public_base() -> str:
             from app.config import get_settings as _gs
-            return (_gs().BILLING_WEBHOOK_PUBLIC_URL or "").rstrip("/")
+
+            async def _run():
+                async with _billing_session() as _s:
+                    stats = await _tick(
+                        _s,
+                        webhook_base_url=(_gs().BILLING_WEBHOOK_PUBLIC_URL or "").rstrip("/"),
+                    )
+                if any(v for v in stats.values()):
+                    _mlog.getLogger("app.main").info("Billing tick: %s", stats)
+
+            await _guarded("billing-cycle", _run)
 
         if str(getattr(settings, "SCHEDULER_INLINE_WORKER", True)).lower() in (
             "1", "true", "yes", "on",
         ):
-            # 30s interval = the old inline worker cadence: posts publish
-            # within ~30s of their scheduled time; coalesce catches up after
-            # a sleep/restart without hot-looping.
             scheduler.add_job(
                 _publish_job, "interval", seconds=30,
                 id="publish-due-posts", max_instances=1, coalesce=True,
@@ -423,16 +565,15 @@ async def lifespan(app: FastAPI):
             _mlog.getLogger("app.main").info(
                 "Silent trainer disabled via SILENT_TRAINER_INLINE_WORKER")
 
-        # Weekly personality rebuild — Sunday 03:00 Cairo (was Celery beat).
+        # Weekly personality rebuild — Sunday 03:00 Cairo.
         scheduler.add_job(
             _personality_job, "cron", day_of_week="sun", hour=3, minute=0,
             id="rebuild-personality-weekly", max_instances=1, coalesce=True,
         )
 
-        # Hourly billing cycle (post-legacy rails: renewals, dunning,
-        # expiry, USDC on-chain settlement). Interval trigger: first run
-        # one hour after boot, then hourly; coalesce catches up after a
-        # restart without stacking.
+        # Hourly billing cycle (renewals, dunning, expiry, USDC on-chain
+        # settlement). First run one hour after boot, then hourly; coalesce
+        # catches up after a restart without stacking.
         scheduler.add_job(
             _billing_tick_job, "interval", seconds=3600,
             id="billing-cycle", max_instances=1, coalesce=True,
@@ -607,3 +748,25 @@ from fastapi.responses import JSONResponse  # noqa: E402
 async def root_health():
     """Lightweight health probe — also used by uptime monitors / load balancers."""
     return JSONResponse({"status": "ok", "service": "zemest-api", "version": "0.1.0"})
+
+
+@app.get("/healthz", include_in_schema=False)
+async def deep_health():
+    """Deep health probe — actually touches the database.
+
+    The root ``/`` probe is static JSON: an app that booted with a broken
+    schema (or lost the DB mid-flight) would still report "ok" and stay in
+    the load-balancer rotation. Compose healthchecks and uptime monitors
+    should use THIS endpoint: it returns 503 when ``SELECT 1`` fails.
+    """
+    try:
+        from sqlalchemy import text as _text
+        from app.database import engine as _engine
+        async with _engine.connect() as _conn:
+            await _conn.execute(_text("SELECT 1"))
+        return JSONResponse({"status": "ok", "db": "up"})
+    except Exception as _e:
+        return JSONResponse(
+            {"status": "degraded", "db": "down", "detail": str(type(_e).__name__)},
+            status_code=503,
+        )

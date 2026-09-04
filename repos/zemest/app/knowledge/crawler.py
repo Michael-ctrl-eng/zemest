@@ -60,16 +60,24 @@ async def crawl_website(url: str, depth: int = 2, max_pages: int = 30) -> list[d
 
 
 async def _quick_fetch(url: str) -> str | None:
-    """Quick test fetch to check if httpx can get real HTML."""
+    """Quick test fetch to check if httpx can get real HTML.
+
+    SSRF hardening (audit A4-C1): routed through :class:`SafeHTTPClient`
+    so every redirect hop is re-validated against the IP blocklist —
+    previously a public URL could 302 to ``http://169.254.169.254/`` and
+    be fetched with zero checks. Content-type allowlist + byte cap added.
+    """
+    from app.middleware.ssrf_protection import SafeHTTPClient, UnsafeURLError
+
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(30.0, connect=10.0),
-            follow_redirects=True,
-            headers=BROWSER_HEADERS,
-        ) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200 and len(resp.text) > 500:
+        client = SafeHTTPClient(timeout=30.0, connect_timeout=10.0, headers=BROWSER_HEADERS)
+        resp = await client.get(url)
+        if resp.status_code == 200 and len(resp.text) > 500:
+            ctype = resp.headers.get("content-type", "")
+            if "text/html" in ctype or "application/xhtml" in ctype:
                 return resp.text
+    except UnsafeURLError as e:
+        logger.warning(f"SSRF guard blocked {url}: {e}")
     except Exception as e:
         logger.warning(f"Quick fetch failed for {url}: {e}")
     return None
@@ -110,7 +118,15 @@ async def _crawl_with_httpx(url: str, depth: int, max_pages: int) -> list[dict]:
 
 
 async def _crawl_with_playwright(url: str, depth: int, max_pages: int) -> list[dict]:
-    """Full browser crawl for Cloudflare-protected or JS-rendered sites."""
+    """Full browser crawl for Cloudflare-protected or JS-rendered sites.
+
+    SSRF hardening (audit A4-C1): the browser context installs a route
+    interceptor that aborts EVERY request/navigation whose target URL fails
+    the SSRF guard — attacker JS (``location.href =
+    'http://169.254.169.254/…'``) can no longer navigate the in-process
+    Chromium to internal endpoints and have ``page.content()`` serialize
+    the response back to the caller.
+    """
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -130,6 +146,21 @@ async def _crawl_with_playwright(url: str, depth: int, max_pages: int) -> list[d
                 locale="en-US",
                 viewport={"width": 1920, "height": 1080},
             )
+
+            # Abort any in-browser request to an unsafe target (JS/meta
+            # refresh navigations, fetch/XHR to private ranges).
+            from app.middleware.ssrf_protection import is_safe_url
+
+            async def _block_unsafe(route):
+                target = route.request.url
+                safe, _reason = is_safe_url(target)
+                if not safe:
+                    logger.warning(f"Playwright SSRF guard aborted request to {target}")
+                    await route.abort()
+                else:
+                    await route.continue_()
+
+            await context.route("**/*", _block_unsafe)
 
             for current_depth in range(depth + 1):
                 next_level = []
@@ -407,16 +438,18 @@ def _sanitize_text(text: str) -> str:
 
 
 async def _find_links(page_url: str, base_domain: str) -> list[str]:
-    """Find same-domain links on a page."""
+    """Find same-domain links on a page.
+
+    SSRF hardening (audit A4-C1): SafeHTTPClient validates every redirect
+    hop before following it.
+    """
+    from app.middleware.ssrf_protection import SafeHTTPClient, UnsafeURLError
+
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0, connect=15.0),
-            follow_redirects=True,
-            headers=BROWSER_HEADERS,
-        ) as client:
-            resp = await client.get(page_url)
-            if resp.status_code != 200:
-                return []
+        client = SafeHTTPClient(timeout=60.0, connect_timeout=15.0, headers=BROWSER_HEADERS)
+        resp = await client.get(page_url)
+        if resp.status_code != 200:
+            return []
         soup = BeautifulSoup(resp.text, "html.parser")
         links = []
         skip = (".jpg", ".png", ".gif", ".pdf", ".zip", ".css", ".js", ".svg")
@@ -428,27 +461,35 @@ async def _find_links(page_url: str, base_domain: str) -> list[str]:
                 if clean not in links and not any(clean.lower().endswith(e) for e in skip):
                     links.append(clean)
         return links[:50]
+    except UnsafeURLError as e:
+        logger.warning(f"SSRF guard blocked {page_url}: {e}")
+        return []
     except Exception:
         return []
 
 
 async def _fetch_and_extract(url: str) -> dict | None:
-    """Fetch URL with browser headers, extract text with trafilatura."""
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(60.0, connect=15.0),
-            follow_redirects=True,
-            headers=BROWSER_HEADERS,
-        ) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                return None
-            content_type = resp.headers.get("content-type", "")
-            if "text/html" not in content_type and "application/xhtml" not in content_type:
-                return None
-            html = resp.text
+    """Fetch URL with browser headers, extract text with trafilatura.
 
-        if len(html) < 100:
+    SSRF hardening (audit A4-C1): SafeHTTPClient re-validates every
+    redirect hop (public redirector → internal metadata endpoint is now
+    blocked), plus a byte cap per page.
+    """
+    from app.middleware.ssrf_protection import SafeHTTPClient, UnsafeURLError
+
+    _MAX_PAGE_BYTES = 5 * 1024 * 1024  # 5 MB per page
+
+    try:
+        client = SafeHTTPClient(timeout=60.0, connect_timeout=15.0, headers=BROWSER_HEADERS)
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        content_type = resp.headers.get("content-type", "")
+        if "text/html" not in content_type and "application/xhtml" not in content_type:
+            return None
+        html = resp.text
+
+        if len(html) < 100 or len(html) > _MAX_PAGE_BYTES:
             return None
 
         text = trafilatura.extract(html, include_comments=False, include_tables=True, favor_precision=True)

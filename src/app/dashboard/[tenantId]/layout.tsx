@@ -15,11 +15,12 @@ import {
   Palette,
   Calendar,
   BarChart3,
+  CreditCard,
+  Flag,
   Settings,
   ArrowLeft,
   LogOut,
   Loader2,
-  CreditCard,
 } from "lucide-react";
 import { MobileSidebar } from "@/components/site/mobile-sidebar";
 import { DashboardQueryProvider } from "@/components/dashboard-query-provider";
@@ -37,6 +38,7 @@ const sidebarItems = [
   { label: "Scheduler", href: "/scheduler", icon: Calendar },
   { label: "Insights", href: "/insights", icon: BarChart3 },
   { label: "Billing", href: "/billing", icon: CreditCard },
+  { label: "Report", href: "/reports", icon: Flag },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 

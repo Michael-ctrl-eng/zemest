@@ -20,6 +20,8 @@ import {
   Menu,
   X,
   ArrowLeft,
+  Flag,
+  CreditCard,
 } from "lucide-react";
 
 const sidebarItems = [
@@ -34,6 +36,8 @@ const sidebarItems = [
   { label: "Style Learning", href: "/style", icon: Palette },
   { label: "Scheduler", href: "/scheduler", icon: Calendar },
   { label: "Insights", href: "/insights", icon: BarChart3 },
+  { label: "Billing", href: "/billing", icon: CreditCard },
+  { label: "Report", href: "/reports", icon: Flag },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 

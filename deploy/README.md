@@ -1,5 +1,11 @@
 # Zemest Production Deployment (2–4 GB VPS)
 
+> **Canonical deployment = `deploy/docker-compose.prod.yml`** — see
+> `ZEMEST_API_KEYS_GUIDE.md` (repo root) for the full step-by-step with
+> every key. THIS file is the minimal-pilot alternative: systemd + binaries
+> + SQLite on the smallest VPS. Capped ~1–2K users (SQLite single-writer) —
+> migrate to the Docker stack before real scale.
+
 Configs from the G4 deployment research (analysis/G4-deployment.md) +
 G2 backup stack (analysis/G2-backups.md). Topology: **systemd + binaries,
 NOT Docker** — the repo's docker-compose.yml targets a heavier

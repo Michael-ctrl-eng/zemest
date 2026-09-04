@@ -4,6 +4,8 @@ updates:
     directory: /repos/zemest
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       dependencies:
         patterns: ["*"]
@@ -11,5 +13,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   # NOTE: npm ecosystem not enabled — Dependabot doesn't parse bun.lock yet.
   # If a committed package-lock.json ever appears, add an npm entry here.

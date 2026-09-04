@@ -66,36 +66,69 @@ async def extract_product_from_url(url: str) -> dict | None:
 
 
 async def _fetch_page(url: str) -> str | None:
-    """Fetch page HTML with browser headers."""
+    """Fetch page HTML with browser headers.
+
+    SSRF hardening (audit A3-C1): routed through :class:`SafeHTTPClient` so
+    every redirect hop is re-validated — a public redirector URL could
+    previously 302 to internal/metadata endpoints and hand the content to
+    the extraction pipeline (and the LLM) for readback. Byte cap added.
+    """
+    from app.middleware.ssrf_protection import SafeHTTPClient, UnsafeURLError
+
+    _MAX_HTML_BYTES = 5 * 1024 * 1024  # 5 MB
+
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(30.0, connect=10.0),
-            follow_redirects=True,
-            headers=BROWSER_HEADERS,
-        ) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                return None
-            ct = resp.headers.get("content-type", "")
-            if "text/html" not in ct and "xhtml" not in ct:
-                return None
-            return resp.text
+        client = SafeHTTPClient(timeout=30.0, connect_timeout=10.0, headers=BROWSER_HEADERS)
+        resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        ct = resp.headers.get("content-type", "")
+        if "text/html" not in ct and "xhtml" not in ct:
+            return None
+        if len(resp.text) > _MAX_HTML_BYTES:
+            logger.warning(f"Page too large for import-url: {url}")
+            return None
+        return resp.text
+    except UnsafeURLError as e:
+        logger.warning(f"SSRF guard blocked {url}: {e}")
+        return None
     except Exception as e:
         logger.warning(f"HTTP fetch failed for {url}: {e}")
         return None
 
 
 async def _fetch_with_playwright(url: str) -> str | None:
-    """Fallback: render JS-heavy pages with Playwright."""
+    """Fallback: render JS-heavy pages with Playwright.
+
+    SSRF hardening (audit A3-C1): a route interceptor aborts every
+    in-browser request/navigation whose target fails the SSRF guard, so
+    attacker JS cannot navigate the browser to internal endpoints and
+    have ``page.content()`` serialize the response.
+    """
     try:
         from playwright.async_api import async_playwright
     except ImportError:
         return None
 
     try:
+        from app.middleware.ssrf_protection import is_safe_url
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(user_agent=BROWSER_HEADERS["User-Agent"])
+            context = await browser.new_context(user_agent=BROWSER_HEADERS["User-Agent"])
+
+            async def _block_unsafe(route):
+                target = route.request.url
+                safe, _reason = is_safe_url(target)
+                if not safe:
+                    logger.warning(f"Playwright SSRF guard aborted request to {target}")
+                    await route.abort()
+                else:
+                    await route.continue_()
+
+            await context.route("**/*", _block_unsafe)
+
+            page = await context.new_page()
             await page.goto(url, wait_until="networkidle", timeout=20000)
             await page.wait_for_timeout(2000)
             html = await page.content()

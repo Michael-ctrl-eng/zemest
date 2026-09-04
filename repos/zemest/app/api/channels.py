@@ -15,6 +15,7 @@ before anything is stored — an invalid token returns the real Graph error.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime
@@ -34,8 +35,6 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tenants/{tenant_id}/channels", tags=["Channels"])
-
-GRAPH = settings.FB_GRAPH_API_URL
 
 
 # ============================================================
@@ -70,30 +69,21 @@ class TestMessageRequest(BaseModel):
 # ============================================================
 
 async def _graph_get(path: str, token: str, fields: str) -> dict:
-    """GET from the Graph API. Returns the parsed JSON on 200.
-    Raises HTTPException with the REAL Graph error message otherwise."""
-    try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(
-                f"{GRAPH}/{path}",
-                params={"access_token": token, "fields": fields},
-            )
-    except httpx.TimeoutException:
-        raise HTTPException(504, "Meta Graph API timed out — try again")
-    except httpx.HTTPError as e:
-        raise HTTPException(502, f"Could not reach Meta Graph API: {e}")
+    """GET from the Graph API via the shared Bearer-only client.
 
-    if resp.status_code != 200:
-        # Surface the real Graph error to the user
-        detail = "Meta rejected these credentials"
-        try:
-            err = resp.json().get("error", {})
-            detail = f"{err.get('type', 'GraphError')} {err.get('code', '')}: {err.get('message', resp.text[:300])}".strip()
-        except Exception:
-            detail = resp.text[:300]
-        logger.warning(f"Graph validation failed on /{path}: {resp.status_code} {detail}")
-        raise HTTPException(400, detail)
-    return resp.json()
+    Tokens travel in the Authorization header — never in the URL query
+    string where proxies/access logs capture them (audit A4-H2).
+    Returns the parsed JSON on 200. Raises HTTPException with the REAL
+    Graph error message otherwise."""
+    from app.services.graph_client import GraphAPIError, graph_get
+
+    try:
+        return await graph_get(path, token, fields=fields)
+    except GraphAPIError as e:
+        if e.status_code in (502, 504):
+            raise HTTPException(e.status_code, e.detail)
+        logger.warning(f"Graph validation failed on /{path}: {e.status_code} {e.detail}")
+        raise HTTPException(400, e.detail)
 
 
 def _iso(dt: Optional[datetime]) -> Optional[str]:
@@ -104,6 +94,19 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
 # Channel status — one call, all platforms
 # ============================================================
 
+async def _safe_graph_get(path: str, token: str, fields: str) -> dict:
+    """_graph_get that never raises — returns {"_error": …} instead."""
+    try:
+        return await _graph_get(path, token, fields)
+    except HTTPException as e:
+        return {"_error": e.detail}
+
+
+async def _none() -> dict:
+    """Placeholder for channels that aren't connected (no Graph call)."""
+    return {}
+
+
 @router.get("")
 async def channel_status(
     tenant: Tenant = Depends(get_tenant),
@@ -112,23 +115,35 @@ async def channel_status(
 
     Reads stored connection metadata + re-checks the token LIVE against
     Graph API so a revoked token shows as disconnected/errored immediately.
+    The three Graph calls run concurrently (audit A4-M7: previously 3 × 12 s
+    sequential worst case ≈ 36 s per dashboard poll).
     """
+    messenger_live, ig_live, wa_live = await asyncio.gather(
+        _safe_graph_get(
+            tenant.fb_page_id, tenant.page_access_token,
+            "name,followers_count,category",
+        ) if (tenant.fb_page_id and tenant.page_access_token) else _none(),
+        _safe_graph_get(
+            tenant.ig_user_id, tenant.ig_access_token,
+            "username,profile_picture_url,followers_count",
+        ) if (tenant.ig_user_id and tenant.ig_access_token) else _none(),
+        _safe_graph_get(
+            tenant.wa_phone_number_id, tenant.wa_access_token,
+            "display_phone_number,verified_name,quality_rating",
+        ) if (tenant.wa_phone_number_id and tenant.wa_access_token) else _none(),
+    )
+
     platforms: dict[str, dict] = {}
 
     # ---- Messenger (Facebook Page) ----
     if tenant.fb_page_id and tenant.page_access_token:
-        live = None
-        try:
-            live = await _graph_get(tenant.fb_page_id, tenant.page_access_token, "name,followers_count,category")
-        except HTTPException as e:
-            live = {"_error": e.detail}
         platforms["messenger"] = {
-            "connected": not live.get("_error"),
+            "connected": not messenger_live.get("_error"),
             "page_id": tenant.fb_page_id,
-            "account_name": live.get("name") or (tenant.messenger_meta or {}).get("account_name") or tenant.page_name,
-            "category": live.get("category"),
-            "followers": live.get("followers_count"),
-            "error": live.get("_error"),
+            "account_name": messenger_live.get("name") or (tenant.messenger_meta or {}).get("account_name") or tenant.page_name,
+            "category": messenger_live.get("category"),
+            "followers": messenger_live.get("followers_count"),
+            "error": messenger_live.get("_error"),
             "connected_at": (tenant.messenger_meta or {}).get("connected_at"),
         }
     else:
@@ -136,18 +151,13 @@ async def channel_status(
 
     # ---- Instagram ----
     if tenant.ig_user_id and tenant.ig_access_token:
-        live = None
-        try:
-            live = await _graph_get(tenant.ig_user_id, tenant.ig_access_token, "username,profile_picture_url,followers_count")
-        except HTTPException as e:
-            live = {"_error": e.detail}
         platforms["instagram"] = {
-            "connected": not live.get("_error"),
+            "connected": not ig_live.get("_error"),
             "ig_user_id": tenant.ig_user_id,
-            "account_name": live.get("username") or (tenant.instagram_meta or {}).get("account_name"),
-            "avatar": live.get("profile_picture_url"),
-            "followers": live.get("followers_count"),
-            "error": live.get("_error"),
+            "account_name": ig_live.get("username") or (tenant.instagram_meta or {}).get("account_name"),
+            "avatar": ig_live.get("profile_picture_url"),
+            "followers": ig_live.get("followers_count"),
+            "error": ig_live.get("_error"),
             "connected_at": (tenant.instagram_meta or {}).get("connected_at"),
         }
     else:
@@ -155,18 +165,13 @@ async def channel_status(
 
     # ---- WhatsApp ----
     if tenant.wa_phone_number_id and tenant.wa_access_token:
-        live = None
-        try:
-            live = await _graph_get(tenant.wa_phone_number_id, tenant.wa_access_token, "display_phone_number,verified_name,quality_rating")
-        except HTTPException as e:
-            live = {"_error": e.detail}
         platforms["whatsapp"] = {
-            "connected": not live.get("_error"),
+            "connected": not wa_live.get("_error"),
             "phone_number_id": tenant.wa_phone_number_id,
-            "display_phone_number": live.get("display_phone_number") or (tenant.whatsapp_meta or {}).get("display_phone_number"),
-            "verified_name": live.get("verified_name"),
-            "quality_rating": live.get("quality_rating"),
-            "error": live.get("_error"),
+            "display_phone_number": wa_live.get("display_phone_number") or (tenant.whatsapp_meta or {}).get("display_phone_number"),
+            "verified_name": wa_live.get("verified_name"),
+            "quality_rating": wa_live.get("quality_rating"),
+            "error": wa_live.get("_error"),
             "connected_at": (tenant.whatsapp_meta or {}).get("connected_at"),
         }
     else:
@@ -410,11 +415,25 @@ async def oauth_url(
 
     Works only when FB_APP_ID is configured on the server. The frontend uses
     `ready:false` to fall back to the manual token form.
+
+    The `state` parameter is signed (HMAC with a server secret) so the
+    callback can prove the flow was initiated by us for this exact tenant
+    (audit A4-M2: it was a guessable ``tenant:{uuid}`` with no CSRF
+    protection). redirect_uri is clamped to the request origin — the
+    client-supplied URL only sets the scheme/host, never the path.
     """
     if not settings.FB_APP_ID:
         return {"ready": False, "reason": "FB_APP_ID not configured on the server yet"}
 
-    redirect = f"{request_url.rstrip('/')}/api/zemest/facebook/oauth/callback"
+    from urllib.parse import urlencode
+    from app.utils.oauth_state import sign_oauth_state
+
+    # Canonical redirect — MUST exactly match the redirect_uri used by
+    # /api/facebook/oauth/callback for Meta's code exchange to succeed.
+    # Config-driven (FB_OAUTH_REDIRECT_ORIGIN); the request origin is only
+    # used when the operator never set the config (dev fallback).
+    redirect = f"{settings.FB_OAUTH_REDIRECT_ORIGIN.rstrip('/')}/api/facebook/oauth/callback"
+
     scopes = [
         "pages_show_list",
         "pages_messaging",
@@ -425,12 +444,11 @@ async def oauth_url(
         "instagram_manage_messages",
         "business_management",
     ]
-    from urllib.parse import urlencode
     params = urlencode({
         "client_id": settings.FB_APP_ID,
         "redirect_uri": redirect,
-        "state": f"tenant:{tenant.id}",
+        "state": sign_oauth_state(str(tenant.id)),
         "response_type": "code",
         "scope": ",".join(scopes),
     })
-    return {"ready": True, "url": f"https://www.facebook.com/v21.0/dialog/oauth?{params}"}
+    return {"ready": True, "url": f"https://www.facebook.com/v22.0/dialog/oauth?{params}"}

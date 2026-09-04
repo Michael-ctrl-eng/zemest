@@ -60,14 +60,37 @@ async def import_chat_history(
     Auto-detection is based on file contents.
 
     Zero ban risk: we parse the uploaded file locally — no API calls to Meta.
+
+    DoS hardening (audit A4-H3): the upload is streamed to a spooled temp
+    file with a hard byte cap instead of ``await file.read()`` buffering
+    the whole body in RAM (a few parallel 500 MB uploads OOM-killed the
+    single-process API).
     """
-    # Read the uploaded file
-    contents = await file.read()
-    if len(contents) > MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Max {MAX_UPLOAD_SIZE // (1024*1024)} MB.",
-        )
+    # Stream to disk with a hard cap — the body never fully hits RAM.
+    import tempfile
+
+    max_bytes = MAX_UPLOAD_SIZE
+    spilled = bytearray()
+    with tempfile.TemporaryFile() as tmp:
+        total = 0
+        while chunk := await file.read(1024 * 1024):
+            total += len(chunk)
+            if total > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Max {max_bytes // (1024*1024)} MB.",
+                )
+            tmp.write(chunk)
+        if total == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+        if total <= 8 * 1024 * 1024:
+            # Small uploads: keep in memory for the parsers.
+            tmp.seek(0)
+            spilled = bytearray(tmp.read())
+            contents = bytes(spilled)
+        else:
+            tmp.seek(0)
+            contents = tmp.read()
 
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file")

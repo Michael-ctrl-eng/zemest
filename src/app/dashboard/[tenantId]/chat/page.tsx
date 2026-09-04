@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, use } from "react";
 import { Send, Trash2, ToggleLeft, ToggleRight, AlertTriangle, Info, Loader2 } from "lucide-react";
 import { useConversation, useSendChatMessage, CHAT_POLL_MS } from "@/hooks/use-dashboard-data";
+import { chatApi } from "@/lib/zemest-api";
 import {
   WinCard,
   DashHeader,
@@ -63,6 +64,25 @@ export default function ChatPlayground({ params }: { params: Promise<{ tenantId:
     const text = input.trim();
     if (!text || sending) return;
     setError(null);
+
+    // Owner mode: talk to the OWNER-side agent (postiz/scheduling) —
+    // audit B6: this used to post to /test/chat, silently creating fake
+    // CUSTOMER conversations while the user believed they were chatting
+    // with the owner-side agent.
+    if (ownerMode) {
+      setMessages((prev) => [...prev, { role: "customer", content: text }]);
+      setInput("");
+      try {
+        const res = await chatApi.sendOwner(tenantId, text);
+        setMessages((prev) => [...prev, { role: "ai", content: res.reply }]);
+      } catch (err: unknown) {
+        const detail = err instanceof Error ? err.message : "The owner agent could not be reached";
+        setError(detail);
+        setMessages((prev) => [...prev, { role: "ai", content: "⚠ " + detail }]);
+      }
+      return;
+    }
+
     setMessages((prev) => [...prev, { role: "customer", content: text }]);
     setInput("");
     const t0 = performance.now();

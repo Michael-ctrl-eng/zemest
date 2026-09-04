@@ -9,6 +9,7 @@ from app.schemas.auth import (
     FacebookLoginRequest,
     LoginRequest,
     LogoutRequest,
+    ProfileUpdateRequest,
     RefreshRequest,
     RegisterAckResponse,
     RegisterRequest,
@@ -36,14 +37,24 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
     """Register a new account.
 
     Anti-enumeration: returns the same 202 + body whether the account was
-    created or the email is already taken. Account existence must not be
+    created, the email is already taken, or policy refused the signup
+    (disposable email / IP ceiling). Account existence must not be
     discoverable from status code, body, or response timing (the duplicate
-    path burns an equal-cost bcrypt hash).
+    and refused paths burn an equal-cost bcrypt hash).
+
+    New accounts get a 7-day trial unless their signup IP already consumed
+    one (see auth_service.register_user).
     """
+    # Client IP for trial-abuse prevention. request.client can be None under
+    # some ASGI test transports — the service treats that as "no IP" (trial
+    # still granted, IP rules inert).
+    signup_ip = None
+    if request.client and request.client.host:
+        signup_ip = request.client.host
     try:
-        await auth_service.register_user(db, req.name, req.email, req.password)
+        await auth_service.register_user(db, req.name, req.email, req.password, signup_ip=signup_ip)
         await db.commit()
-    except auth_service.EmailAlreadyRegistered:
+    except (auth_service.EmailAlreadyRegistered, auth_service.RegistrationRefused):
         # Burn the same bcrypt cost a genuine registration just paid so the
         # response timing does not leak which path executed.
         from app.utils.security import burn_password_timing
@@ -58,7 +69,8 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
 @_limiter.limit("5/minute")
 async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
-        pair = await auth_service.login_user(db, req.email, req.password)
+        # Session/geo tracking happens inside login_user (best-effort).
+        pair = await auth_service.login_user(db, req.email, req.password, request=request)
         await db.commit()
         return TokenResponse(**pair)
     except auth_service.AuthError as e:
@@ -104,17 +116,57 @@ async def logout(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    """Revoke one refresh token (idempotent, always 204)."""
+    """Revoke one refresh token (idempotent, always 204).
+
+    Also closes the user's tracked admin-analytics sessions (best-effort).
+    """
     await auth_service.revoke_refresh_token(db, req.refresh_token)
+    try:
+        from app.services.session_tracking import mark_sessions_inactive
+        await mark_sessions_inactive(db, user.id)
+    except Exception:  # noqa: BLE001 — never block logout
+        pass
     await db.commit()
 
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(user=Depends(get_current_user)):
+    from app.services.plan_service import effective_plan, trial_state
+
     return UserResponse(
         id=str(user.id),
         name=user.name,
         email=user.email,
         fb_user_id=user.fb_user_id,
         is_superadmin=bool(user.is_superadmin),
+        plan=effective_plan(user),
+        trial=trial_state(user),
+    )
+
+
+@router.patch("/me/profile", response_model=UserResponse)
+async def update_my_profile(
+    req: ProfileUpdateRequest,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set optional profile info (date of birth) — encrypted at rest.
+
+    Feeds the analytics/admin views ("date of birth of the user" in the
+    product requirements). Validation lives in the schema (ISO date,
+    no future dates, 13–120 years).
+    """
+    from app.services.plan_service import effective_plan, trial_state
+
+    if "date_of_birth" in req.model_fields_set:
+        user.date_of_birth = req.date_of_birth or None
+    await db.commit()
+    return UserResponse(
+        id=str(user.id),
+        name=user.name,
+        email=user.email,
+        fb_user_id=user.fb_user_id,
+        is_superadmin=bool(user.is_superadmin),
+        plan=effective_plan(user),
+        trial=trial_state(user),
     )

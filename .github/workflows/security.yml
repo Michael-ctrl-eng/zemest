@@ -8,17 +8,18 @@ on:
     - cron: "17 4 * * 1" # weekly: newly published CVEs vs our pins
 permissions:
   contents: read
-  security-events: write # SARIF upload (zizmor)
+  # security-events: write is granted ONLY on the zizmor job (SARIF upload)
 
 jobs:
   gitleaks:
     name: secrets (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # full history — where the PAT incident lived
-      - uses: gitleaks/gitleaks-action@v3
+          persist-credentials: false # read-only audit, no git push anywhere
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # GITLEAKS_LICENSE: only required for orgs — personal account = free
@@ -27,8 +28,10 @@ jobs:
     name: python deps (pip-audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uvx pip-audit -r repos/zemest/requirements.txt
         # 38 known vulns at G3-audit time; the 2026-09 upgrade batch fixed
         # the runtime ones (jose/multipart/jinja2/dotenv/aiosmtplib/sqladmin/
@@ -41,13 +44,17 @@ jobs:
     name: js deps (npm audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - run: npm install --package-lock-only --ignore-scripts
       - run: npm audit --audit-level=high
-        # bun.lock stays canonical; this is the CI-only bridge (G3 §2.3)
+        # bun.lock stays canonical; this is the CI-only bridge (G3 §2.3).
+        # Fresh resolution + live advisory DB: resolves latest in-range
+        # versions on a clean runner cache (verified 2026-09-03).
 
   zizmor:
     name: workflows (zizmor)
@@ -56,10 +63,14 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v5
-      - run: uvx zizmor --format sarif --output zizmor.sarif .
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      # zizmor has no --output flag (SARIF goes to stdout); redirect instead.
+      # Version pinned so exit-code semantics can't drift under us.
+      - run: uvx zizmor@1.30.0 --format sarif . > zizmor.sarif
+      - uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d # v3
         if: always()
         with:
           sarif_file: zizmor.sarif
@@ -68,8 +79,10 @@ jobs:
     name: python sast-lite (bandit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uvx bandit -r repos/zemest/app -ll -f txt
         # -ll = medium+ only. The 2026-09 batch fixed the last HIGH (B324
         # sha1 in silent_trainer) and MED (B104 0.0.0.0 bind) findings.

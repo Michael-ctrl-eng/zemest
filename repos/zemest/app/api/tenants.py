@@ -11,6 +11,42 @@ from app.services import tenant_service
 router = APIRouter(prefix="/api/tenants", tags=["Tenants"])
 
 
+def _mask_secret(value: str | None) -> str | None:
+    """Mask a secret for API responses (audit A3-M2).
+
+    Returns ``"****last4"`` — enough for the merchant to recognize WHICH
+    credential is stored, never the credential itself. Tokens/keys were
+    previously echoed verbatim on every list/get, riding along into browser
+    caches, BFF logs and anywhere the dashboard loads.
+    """
+    if not value:
+        return value
+    if len(value) <= 4:
+        return "****"
+    return f"****{value[-4:]}"
+
+
+def _mask_payment_methods(pm: dict | None) -> dict | None:
+    """Mask wallet numbers / account IDs in payment_methods."""
+    if not pm:
+        return pm
+    return {
+        k: (_mask_secret(v) if isinstance(v, str) and v else v)
+        for k, v in pm.items()
+    }
+
+
+def _mask_order_api_config(cfg: dict | None) -> dict | None:
+    """Mask auth_value/auth_pass in order_api_config."""
+    if not cfg:
+        return cfg
+    masked = dict(cfg)
+    for key in ("auth_value", "auth_pass", "password", "token", "api_key"):
+        if masked.get(key):
+            masked[key] = "****"
+    return masked
+
+
 def _tenant_response(t) -> TenantResponse:
     return TenantResponse(
         id=str(t.id),
@@ -23,8 +59,8 @@ def _tenant_response(t) -> TenantResponse:
         delivery_inside_cairo=t.delivery_inside_cairo,
         delivery_outside_cairo=t.delivery_outside_cairo,
         free_delivery_above=t.free_delivery_above,
-        payment_methods=t.payment_methods,
-        order_api_config=t.order_api_config,
+        payment_methods=_mask_payment_methods(t.payment_methods),
+        order_api_config=_mask_order_api_config(t.order_api_config),
         is_active=t.is_active,
         created_at=t.created_at,
     )
@@ -36,6 +72,14 @@ async def create_tenant(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Plan gate (app/services/plan_service.py): shop count per account.
+    from app.services.plan_service import check_can_create_shop, PlanLimitError
+    from app.api.plans import plan_limit_http_error
+    try:
+        await check_can_create_shop(db, user)
+    except PlanLimitError as e:
+        raise plan_limit_http_error(e)
+
     tenant = await tenant_service.create_tenant(
         db, user, **req.model_dump(),
     )
@@ -62,6 +106,23 @@ async def update_tenant_detail(
     tenant=Depends(get_tenant),
     db: AsyncSession = Depends(get_db),
 ):
+    # SSRF guard (audit A3-H1): validate the order_api_config webhook URL
+    # at WRITE time so the retry-api endpoint can never be aimed at
+    # internal/metadata endpoints later.
+    if req.order_api_config is not None:
+        cfg = req.order_api_config or {}
+        if cfg.get("enabled"):
+            url = cfg.get("url")
+            if not url:
+                raise HTTPException(422, "order_api_config.url is required when enabled")
+            from app.middleware.ssrf_protection import is_safe_url
+            safe, reason = is_safe_url(url)
+            if not safe:
+                raise HTTPException(422, f"order_api_config.url rejected: {reason}")
+            method = (cfg.get("method") or "POST").upper()
+            if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                raise HTTPException(422, f"order_api_config.method not allowed: {method}")
+
     # exclude_unset (not exclude_none): the settings page deliberately sends
     # nulls to CLEAR a field — exclude_none silently dropped them.
     updated = await tenant_service.update_tenant(

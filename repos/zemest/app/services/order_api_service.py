@@ -22,6 +22,12 @@ async def call_order_api(db: AsyncSession, tenant: Tenant, order: Order) -> dict
     """Call the tenant's external order API. Returns status dict.
 
     Always saves result on the order record.
+
+    SSRF hardening (audit A3-H1): the URL is re-validated at CALL time
+    (config could have been written before this guard existed), and
+    external response bodies are no longer returned to the API caller /
+    echoed in OrderResponse — only the status code and a sanitized error
+    classification travel outward; full bodies are logged server-side.
     """
     config = tenant.order_api_config
     if not config or not config.get("enabled") or not config.get("url"):
@@ -31,6 +37,24 @@ async def call_order_api(db: AsyncSession, tenant: Tenant, order: Order) -> dict
 
     url = config["url"]
     method = config.get("method", "POST").upper()
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        order.api_status = "failed"
+        order.api_response = f"blocked: method {method} not allowed"
+        await db.flush()
+        return {"status": "blocked", "error": "method not allowed"}
+
+    # Call-time SSRF re-validation (defense in depth — the tenant PATCH
+    # path validates on write, but rows written before that guard existed
+    # or direct DB edits must not become live SSRF vectors).
+    from app.middleware.ssrf_protection import is_safe_url
+    safe, reason = is_safe_url(url)
+    if not safe:
+        order.api_status = "blocked"
+        order.api_response = f"blocked: {reason}"
+        await db.flush()
+        logger.warning(f"Order API URL blocked by SSRF guard ({reason}): {url}")
+        return {"status": "blocked", "error": "URL rejected by security policy"}
+
     auth_type = config.get("auth_type", "none")
 
     # Build headers
@@ -75,7 +99,8 @@ async def call_order_api(db: AsyncSession, tenant: Tenant, order: Order) -> dict
                     error_msg = resp_json.get("error", resp_json.get("message", "Unknown error in response"))
                     await db.flush()
                     logger.warning(f"Order API {status_code} but error in body: {error_msg}")
-                    return {"status": "failed", "code": status_code, "error": str(error_msg)}
+                    # Sanitized: no external body readback to the caller
+                    return {"status": "failed", "code": status_code, "error": "remote API reported an error"}
             except (json.JSONDecodeError, ValueError):
                 pass
 
@@ -97,7 +122,8 @@ async def call_order_api(db: AsyncSession, tenant: Tenant, order: Order) -> dict
             await db.flush()
 
             logger.warning(f"Order API failed: {status_code} {response_text[:200]}")
-            return {"status": "failed", "code": status_code, "error": response_text[:200]}
+            # Sanitized: the caller sees the code, not the body (audit H1)
+            return {"status": "failed", "code": status_code, "error": f"remote API returned {status_code}"}
 
     except httpx.TimeoutException:
         order.api_status = "failed"
@@ -114,7 +140,8 @@ async def call_order_api(db: AsyncSession, tenant: Tenant, order: Order) -> dict
         order.api_called_at = datetime.utcnow()
         await db.flush()
         logger.error(f"Order API error: {e}")
-        return {"status": "failed", "code": 0, "error": str(e)[:200]}
+        # Sanitized: exception text can carry internal host/port details
+        return {"status": "failed", "code": 0, "error": "remote API unreachable"}
 
 
 def _fill_template(template_str: str, order: Order) -> dict:

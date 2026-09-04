@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchWithHeal } from "@/lib/backend-health";
 import { authCookieAttributes } from "@/lib/auth-cookies";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// ZEMEST_BACKEND_URL (runtime, container-friendly) takes precedence over
+// NEXT_PUBLIC_API_URL (build-time inlined) — same precedence as the
+// /api/zemest catch-all proxy in lib/backend-health.ts.
+const BACKEND_URL =
+  process.env.ZEMEST_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export async function POST(request: NextRequest) {
   try {

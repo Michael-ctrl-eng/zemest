@@ -406,6 +406,39 @@ def _fake_checkout_for(transaction: BillingTransaction):
 
 
 # --------------------------------------------------------------------------- #
+# User-plan bridge (platform limits)
+# --------------------------------------------------------------------------- #
+# The platform's usage gates (plan_service: free/growth/pro) read
+# ``users.plan``. The billing rails own the MONEY state; this bridge keeps
+# the feature tier in sync so a paid subscription actually unlocks limits
+# and a cancellation/expiry actually drops back to free.
+_PLAN_TO_USER_PLAN = {
+    "starter": "growth",  # first paid tier → Growth limits (multi-shop)
+    "growth": "growth",
+    "pro": "pro",
+}
+
+
+async def _sync_user_plan(db: AsyncSession, subscription: BillingSubscription, *, active: bool) -> None:
+    """Mirror the subscription state onto the tenant owner's users.plan."""
+    from app.models.user import User
+
+    plan = await db.scalar(select(BillingPlan).where(BillingPlan.id == subscription.plan_id))
+    target = "free"
+    if active and plan is not None:
+        target = _PLAN_TO_USER_PLAN.get((plan.code or "").lower(), "growth")
+    tenant = await db.scalar(select(Tenant).where(Tenant.id == subscription.tenant_id))
+    if tenant is None:
+        return
+    user = await db.scalar(select(User).where(User.id == tenant.owner_id))
+    if user is not None and (getattr(user, "plan", None) or "free") != target:
+        user.plan = target
+        # A paid plan outranks (and ends) any free trial window.
+        if target != "free":
+            user.trial_ends_at = None
+
+
+# --------------------------------------------------------------------------- #
 # The idempotent activation gate
 # --------------------------------------------------------------------------- #
 async def mark_invoice_paid(
@@ -455,6 +488,7 @@ async def mark_invoice_paid(
         if not subscription.current_period_end or subscription.current_period_end <= now:
             subscription.current_period_start = now
             subscription.current_period_end = next_period_end(now)
+        await _sync_user_plan(db, subscription, active=True)
     await db.commit()
 
     tenant = await db.scalar(select(Tenant).where(Tenant.id == transaction.tenant_id))
@@ -532,6 +566,7 @@ async def cancel_subscription(
     if immediate:
         subscription.status = "canceled"
         subscription.canceled_at = now
+        await _sync_user_plan(db, subscription, active=False)
     else:
         subscription.cancel_at_period_end = True
         if not subscription.current_period_end or subscription.current_period_end <= now:
@@ -677,6 +712,7 @@ async def billing_tick(
         if sub.cancel_at_period_end:
             sub.status = "canceled"
             sub.canceled_at = now
+            await _sync_user_plan(db, sub, active=False)
             stats["canceled"] += 1
             continue
         # Roll the period forward and open the next invoice (idempotent).
@@ -773,6 +809,7 @@ async def billing_tick(
     ).all()
     for sub in expired_subs:
         sub.status = "expired"
+        await _sync_user_plan(db, sub, active=False)
         stats["expired"] += 1
     if expired_subs:
         await db.commit()

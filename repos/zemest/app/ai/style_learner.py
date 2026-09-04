@@ -113,17 +113,22 @@ def smart_sample(messages: list[Message], sample_size: int = SAMPLE_SIZE) -> lis
     old_target = sample_size - recent_target - mid_target
 
     # Sample from each bucket (random)
-    random.seed(42)  # reproducible
+    # SECURITY (audit A6-H6): previously `random.seed(42)` re-seeded the
+    # process-global RNG, making order-number suffixes (order_service uses
+    # random.randint) deterministic/predictable after every style build.
+    # A local Random instance keeps sampling reproducible without touching
+    # global state.
+    rng = random.Random(42)
     sampled = []
-    sampled.extend(random.sample(recent, min(recent_target, len(recent))) if recent else [])
-    sampled.extend(random.sample(mid, min(mid_target, len(mid))) if mid else [])
-    sampled.extend(random.sample(old, min(old_target, len(old))) if old else [])
+    sampled.extend(rng.sample(recent, min(recent_target, len(recent))) if recent else [])
+    sampled.extend(rng.sample(mid, min(mid_target, len(mid))) if mid else [])
+    sampled.extend(rng.sample(old, min(old_target, len(old))) if old else [])
 
     # If we're short (some buckets were empty), top up from the largest bucket
     deficit = sample_size - len(sampled)
     if deficit > 0:
         remaining = [m for m in messages if m not in sampled]
-        sampled.extend(random.sample(remaining, min(deficit, len(remaining))) if remaining else [])
+        sampled.extend(rng.sample(remaining, min(deficit, len(remaining))) if remaining else [])
 
     # Deduplicate near-identical messages (same first 50 chars)
     seen_prefixes: set[str] = set()
@@ -331,11 +336,15 @@ async def llm_style_extraction(messages: list[Message]) -> dict | None:
 
     try:
         from app.ai.llm_client import chat_completion_with_usage
+        from app.utils.pii_redact import redact_pii
+        from app.utils.safe_json import extract_first_json_object
 
-        # Format messages for the prompt (limit to 50 to keep prompt small)
+        # Format messages for the prompt (limit to 50 to keep prompt small).
+        # PII redaction (audit A6-H5): buyer/merchant phone numbers, emails
+        # and long digit runs never leave the trust boundary in cleartext.
         sample = messages[:50]
         formatted = "\n".join(
-            f"{i+1}. {m.content[:200]}"
+            f"{i+1}. {redact_pii(m.content[:200])}"
             for i, m in enumerate(sample)
             if m.content
         )
@@ -350,11 +359,12 @@ async def llm_style_extraction(messages: list[Message]) -> dict | None:
         if not result or not result.content:
             return None
 
-        # Extract JSON from response
-        import re
-        json_match = re.search(r'\{.*\}', result.content, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(0))
+        # Extract JSON from response — balanced extraction (audit A6-H3
+        # class): a greedy `\{.*\}` spanned to the last brace and dropped
+        # the profile whenever trailing prose contained a brace.
+        profile, _s, _e = extract_first_json_object(result.content)
+        if isinstance(profile, dict):
+            return profile
 
     except Exception as e:
         logger.warning(f"LLM style extraction failed: {e}")

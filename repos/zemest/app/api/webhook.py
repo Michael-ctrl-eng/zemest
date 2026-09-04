@@ -35,7 +35,9 @@ async def verify_webhook(request: Request):
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
 
-    if mode == "subscribe" and token == settings.FB_VERIFY_TOKEN:
+    if mode == "subscribe" and hmac.compare_digest(
+        token or "", settings.FB_VERIFY_TOKEN
+    ):
         logger.info("Messenger webhook verified")
         return Response(content=challenge, media_type="text/plain")
 
@@ -61,7 +63,16 @@ async def receive_messenger_event(
 
     for entry in data.get("entry", []):
         page_id = entry.get("id")
-        events = entry.get("messaging", []) or entry.get("standby", [])
+        # SECURITY (audit A3-M10): Meta delivers the same message via BOTH
+        # `messaging` and `standby` in multi-app setups — processing both
+        # ran the agent pipeline twice per message (double LLM spend, double
+        # mark_seen/typing side effects). Standby is now ignored entirely.
+        events = entry.get("messaging", [])
+        if entry.get("standby"):
+            logger.debug(
+                f"Skipping {len(entry['standby'])} standby events for page "
+                f"{page_id} (duplicate of messaging channel)"
+            )
         for event in events:
             event_type = _classify_messenger_event(event)
 
@@ -276,8 +287,10 @@ async def verify_instagram_webhook(request: Request):
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
 
-    if mode == "subscribe" and token == settings.FB_VERIFY_TOKEN:
-        return Response(content=challenge, media_type="text_plain")
+    if mode == "subscribe" and hmac.compare_digest(
+        token or "", settings.FB_VERIFY_TOKEN
+    ):
+        return Response(content=challenge, media_type="text/plain")
     return Response(content="Forbidden", status_code=403)
 
 
@@ -423,7 +436,9 @@ async def verify_whatsapp_webhook(request: Request):
     token = params.get("hub.verify_token")
     challenge = params.get("hub.challenge")
 
-    if mode == "subscribe" and token == settings.FB_VERIFY_TOKEN:
+    if mode == "subscribe" and hmac.compare_digest(
+        token or "", settings.FB_VERIFY_TOKEN
+    ):
         logger.info("WhatsApp webhook verified")
         return Response(content=challenge, media_type="text/plain")
     return Response(content="Forbidden", status_code=403)
@@ -459,19 +474,19 @@ async def _process_whatsapp_message(phone_number_id: str, msg: dict, contacts: l
     sender_id = msg.get("from", "")
     msg_type = msg.get("type", "")
     message_text = ""
-    media_urls = []
-    audio_urls = []
+    media_ids: list[str] = []      # raw WhatsApp media IDs (not URLs yet)
+    audio_ids: list[str] = []
 
     if msg_type == "text":
         message_text = msg.get("text", {}).get("body", "")
     elif msg_type == "image":
-        media_urls.append(msg.get("image", {}).get("id", ""))
+        media_ids.append(msg.get("image", {}).get("id", ""))
     elif msg_type == "audio":
-        audio_urls.append(msg.get("audio", {}).get("id", ""))
+        audio_ids.append(msg.get("audio", {}).get("id", ""))
     elif msg_type == "video":
-        media_urls.append(msg.get("video", {}).get("id", ""))
+        media_ids.append(msg.get("video", {}).get("id", ""))
     elif msg_type == "document":
-        media_urls.append(msg.get("document", {}).get("id", ""))
+        media_ids.append(msg.get("document", {}).get("id", ""))
     elif msg_type == "interactive":
         interactive = msg.get("interactive", {})
         if interactive.get("type") == "button_reply":
@@ -481,7 +496,7 @@ async def _process_whatsapp_message(phone_number_id: str, msg: dict, contacts: l
 
     if not sender_id:
         return
-    if not message_text and not media_urls and not audio_urls:
+    if not message_text and not media_ids and not audio_ids:
         return
 
     customer_name = ""
@@ -499,6 +514,26 @@ async def _process_whatsapp_message(phone_number_id: str, msg: dict, contacts: l
             if not tenant:
                 logger.warning(f"No tenant for WhatsApp number {phone_number_id}")
                 return
+
+            # WhatsApp Cloud webhooks carry opaque media IDs, not URLs.
+            # Resolve them to downloadable URLs via the Graph API so the
+            # vision/transcription pipeline can actually fetch the bytes
+            # (audit: raw IDs were stored into Message.media_urls where
+            # nothing could download them). Bearer-only auth.
+            from app.services.graph_client import resolve_media_url
+
+            async def _resolve(ids: list[str]) -> list[str]:
+                resolved: list[str] = []
+                for media_id in ids:
+                    if not media_id:
+                        continue
+                    url = await resolve_media_url(media_id, tenant.wa_access_token or "")
+                    if url:
+                        resolved.append(url)
+                return resolved
+
+            media_urls = await _resolve(media_ids)
+            audio_urls = await _resolve(audio_ids)
 
             from app.ai.agent import process_customer_message
             from app.services.whatsapp_service import send_whatsapp_message

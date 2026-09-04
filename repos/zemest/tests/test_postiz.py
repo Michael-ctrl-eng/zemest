@@ -228,9 +228,11 @@ class TestPostizAPI:
             data = resp.json()
             assert data["healthy"] is True
 
-    async def test_list_integrations_endpoint(self, client, auth_headers, test_tenant):
-        """Test the list integrations endpoint."""
-        with patch("app.api.postiz.get_postiz_client") as mock_get:
+    async def test_list_integrations_endpoint(self, client, db_session, auth_headers, test_tenant):
+        """Test the list integrations endpoint (per-tenant session)."""
+        test_tenant.postiz_token = "tenant-postiz-jwt"
+        await db_session.commit()
+        with patch("app.api.postiz.get_postiz_client_for_tenant") as mock_get:
             mock_postiz = AsyncMock()
             mock_postiz.list_integrations = AsyncMock(return_value=[
                 {"id": "1", "identifier": "My Page", "provider": "facebook"},
@@ -245,9 +247,20 @@ class TestPostizAPI:
             data = resp.json()
             assert len(data["integrations"]) == 1
 
-    async def test_create_post_endpoint(self, client, auth_headers, test_tenant):
+    async def test_integrations_require_login(self, client, auth_headers, test_tenant):
+        """No stored Postiz session → 401, never the old shared session."""
+        assert not test_tenant.postiz_token
+        resp = await client.get(
+            f"/api/tenants/{test_tenant.id}/postiz/integrations",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 401
+
+    async def test_create_post_endpoint(self, client, db_session, auth_headers, test_tenant):
         """Test creating a post via Postiz."""
-        with patch("app.api.postiz.get_postiz_client") as mock_get:
+        test_tenant.postiz_token = "tenant-postiz-jwt"
+        await db_session.commit()
+        with patch("app.api.postiz.get_postiz_client_for_tenant") as mock_get:
             mock_postiz = AsyncMock()
             mock_postiz.create_post = AsyncMock(return_value={
                 "id": "post-123",
@@ -270,9 +283,11 @@ class TestPostizAPI:
             assert data["status"] == "created"
             assert data["postiz_result"]["id"] == "post-123"
 
-    async def test_get_connect_url_endpoint(self, client, auth_headers, test_tenant):
+    async def test_get_connect_url_endpoint(self, client, db_session, auth_headers, test_tenant):
         """Test getting the OAuth connect URL."""
-        with patch("app.api.postiz.get_postiz_client") as mock_get:
+        test_tenant.postiz_token = "tenant-postiz-jwt"
+        await db_session.commit()
+        with patch("app.api.postiz.get_postiz_client_for_tenant") as mock_get:
             mock_postiz = AsyncMock()
             mock_postiz.get_connect_url = AsyncMock(return_value="https://facebook.com/oauth/authorize?...")
             mock_get.return_value = mock_postiz
@@ -286,9 +301,11 @@ class TestPostizAPI:
             assert "oauth" in data["url"]
             assert data["provider"] == "facebook"
 
-    async def test_delete_post_endpoint(self, client, auth_headers, test_tenant):
+    async def test_delete_post_endpoint(self, client, db_session, auth_headers, test_tenant):
         """Test deleting a post via Postiz."""
-        with patch("app.api.postiz.get_postiz_client") as mock_get:
+        test_tenant.postiz_token = "tenant-postiz-jwt"
+        await db_session.commit()
+        with patch("app.api.postiz.get_postiz_client_for_tenant") as mock_get:
             mock_postiz = AsyncMock()
             mock_postiz.delete_post = AsyncMock(return_value=True)
             mock_get.return_value = mock_postiz
@@ -300,9 +317,11 @@ class TestPostizAPI:
             assert resp.status_code == 200
             assert resp.json()["status"] == "deleted"
 
-    async def test_best_time_endpoint(self, client, auth_headers, test_tenant):
+    async def test_best_time_endpoint(self, client, db_session, auth_headers, test_tenant):
         """Test the best-time (find free slot) endpoint."""
-        with patch("app.api.postiz.get_postiz_client") as mock_get:
+        test_tenant.postiz_token = "tenant-postiz-jwt"
+        await db_session.commit()
+        with patch("app.api.postiz.get_postiz_client_for_tenant") as mock_get:
             mock_postiz = AsyncMock()
             mock_postiz.find_free_slot = AsyncMock(return_value="2026-01-15T14:00:00Z")
             mock_get.return_value = mock_postiz
