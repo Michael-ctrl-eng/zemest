@@ -41,13 +41,25 @@ services:
       - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD:-zemest_secret}@db:5432/${POSTGRES_DB:-zemest}
       - REDIS_URL=redis://redis:6379/0
       - POSTIZ_URL=http://postiz:5000
+      # Billing rails (post-legacy): payoneer / paymob / usdc_solana.
+      # Secrets come from .env (env_file above) — only non-secret defaults
+      # are listed here.
+      - BILLING_ENABLED=${BILLING_ENABLED:-true}
+      - BILLING_WEBHOOK_PUBLIC_URL=${BILLING_WEBHOOK_PUBLIC_URL:-}
+      - PAYONEER_API_BASE_URL=${PAYONEER_API_BASE_URL:-https://api.payoneer.com}
+      - PAYMOB_BASE_URL=${PAYMOB_BASE_URL:-https://egypt.paymob.com}
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
+      - USDC_MINT_ADDRESS=${USDC_MINT_ADDRESS:-EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v}
+      - USDC_TREASURY_WALLET=${USDC_TREASURY_WALLET:-}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      # Root health probe (docs are disabled when APP_ENV=production —
+      # /docs made this healthcheck fail in prod).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -55,36 +67,28 @@ services:
     restart: unless-stopped
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-  celery_worker:
+  # HEALED: the old queue services referenced a queue module that no
+  # longer exists (the queue moved to Huey — SQLite-native). Replaced by
+  # a huey consumer; the inline APScheduler in `app` owns the hourly
+  # billing cycle, publish and trainer jobs.
+  worker:
     build: .
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD:-zemest_secret}@db:5432/${POSTGRES_DB:-zemest}
       - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD:-zemest_secret}@db:5432/${POSTGRES_DB:-zemest}
-      - REDIS_URL=redis://redis:6379/0
-      - POSTIZ_URL=http://postiz:5000
+      - HUEY_SQLITE_PATH=/data/huey_queue.db
+      # External consumer mode: the app process must not start its own.
+      - HUEY_INLINE_CONSUMER=false
+      - SCHEDULER_INLINE_WORKER=${SCHEDULER_INLINE_WORKER:-true}
+      - SILENT_TRAINER_INLINE_WORKER=${SILENT_TRAINER_INLINE_WORKER:-true}
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     restart: unless-stopped
-    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
-
-  celery_beat:
-    build: .
-    env_file: .env
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD:-zemest_secret}@db:5432/${POSTGRES_DB:-zemest}
-      - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD:-zemest_secret}@db:5432/${POSTGRES_DB:-zemest}
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    command: celery -A app.tasks.celery_app beat --loglevel=info
+    volumes:
+      - huey_data:/data
+    command: huey_consumer app.tasks.huey_app.huey_app -w 2 -l info
 
   # ============================================================
   # Postiz — social media scheduler sidecar
@@ -168,6 +172,7 @@ services:
 
 volumes:
   postgres_data:
+  huey_data:
   postiz-config:
   postiz-uploads:
   postiz-postgres-data:

@@ -646,3 +646,191 @@ export const authApi = {
   },
   me: () => api.get<Me>("/auth/me"),
 };
+
+// ---------- Billing (rails: payoneer primary / paymob backup / usdc_solana crypto) ----------
+
+export type PaymentMethod = "payoneer" | "paymob" | "usdc_solana";
+
+export interface BillingPlan {
+  code: string;
+  name: string;
+  description: string | null;
+  price_egp: string;
+  price_usdc: string;
+  billing_interval: string;
+  trial_days: number;
+  limits: Record<string, number> | null;
+}
+
+export interface BillingRail {
+  method: PaymentMethod;
+  configured: boolean;
+  role: "primary" | "backup" | "crypto";
+}
+
+export interface RailsResponse {
+  billing_enabled: boolean;
+  rails: BillingRail[];
+}
+
+export interface UsdcInstructions {
+  network: string;
+  deposit_address: string;
+  amount_usdc: string;
+  amount_micro: number;
+  reference_memo: string;
+  confirmations_required: number;
+  note: string;
+}
+
+export interface SubscribeResponse {
+  tenant_id: string;
+  plan_code: string;
+  plan_name: string;
+  payment_method: PaymentMethod;
+  subscription_status: string;
+  current_period_end: string | null;
+  transaction_id: string;
+  amount: string;
+  currency: string;
+  checkout_url: string | null;
+  usdc_instructions: UsdcInstructions | null;
+}
+
+export interface BillingSubscriptionInfo {
+  tenant_id: string;
+  status: string;
+  plan_code: string | null;
+  plan_name: string | null;
+  payment_method: PaymentMethod | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  dunning_attempts: number;
+  last_payment_at: string | null;
+  limits: Record<string, number> | null;
+}
+
+export interface BillingTransactionItem {
+  id: string;
+  kind: string;
+  payment_method: PaymentMethod;
+  status: string;
+  amount: string;
+  amount_usdc: string | null;
+  currency: string;
+  checkout_url: string | null;
+  solana_reference: string | null;
+  created_at: string | null;
+  paid_at: string | null;
+  failed_reason: string | null;
+}
+
+export interface UsdcCheckResponse {
+  tenant_id: string;
+  subscription_status: string | null;
+  pending_invoice_id: string | null;
+  pending_invoice_status: string | null;
+  settled_now: boolean;
+  swept_settled: number;
+  swept_voided: number;
+}
+
+export const billingApi = {
+  plans: () => api.get<BillingPlan[]>("/billing/plans"),
+  rails: () => api.get<RailsResponse>("/billing/rails"),
+  subscription: (tenantId: string) =>
+    api.get<BillingSubscriptionInfo>(`/billing/subscription?tenant_id=${tenantId}`),
+  subscribe: (tenantId: string, planCode: string, paymentMethod: PaymentMethod) =>
+    api.post<SubscribeResponse>("/billing/subscribe", {
+      tenant_id: tenantId,
+      plan_code: planCode,
+      payment_method: paymentMethod,
+    }),
+  cancel: (tenantId: string, immediate = false) =>
+    api.post<BillingSubscriptionInfo>("/billing/cancel", {
+      tenant_id: tenantId,
+      immediate,
+    }),
+  reactivate: (tenantId: string) =>
+    api.post<BillingSubscriptionInfo>("/billing/reactivate", { tenant_id: tenantId }),
+  transactions: (tenantId: string, limit = 20) =>
+    api.get<BillingTransactionItem[]>(
+      `/billing/transactions?tenant_id=${tenantId}&limit=${limit}`
+    ),
+  /** Trigger the on-chain USDC settlement sweep and report this tenant's invoice. */
+  usdcCheck: (tenantId: string) =>
+    api.post<UsdcCheckResponse>("/billing/usdc/check", { tenant_id: tenantId }),
+};
+
+// ---------- Admin billing (treasury / withdrawals) ----------
+
+export interface BillingOverview {
+  mrr_egp: string;
+  subscriptions: Record<string, number>;
+  invoices: Record<string, number>;
+  pending_payouts: number;
+  open_disputes: number;
+  payouts_held: boolean;
+}
+
+export interface TreasuryStatus {
+  usdc_balance: string;
+  usdc_mint: string;
+  treasury_wallet: string | null;
+  treasury_configured: boolean;
+  min_reserve_usdc: string;
+  bank_label: string;
+  pending_withdrawals: PayoutRequestItem[];
+  open_disputes: number;
+  payouts_held: boolean;
+}
+
+export interface PayoutRequestItem {
+  id: string;
+  kind: "usdc" | "bank";
+  status: string;
+  amount_usdc: string | null;
+  amount_egp: string | null;
+  destination: Record<string, unknown> | null;
+  approvers: string[] | null;
+  execution_reference: string | null;
+  notes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface BillingTickStats {
+  renewed: number;
+  dunning_attempted: number;
+  past_due: number;
+  canceled: number;
+  expired: number;
+  usdc_settled: number;
+  usdc_voided: number;
+}
+
+export const adminBillingApi = {
+  overview: () => api.get<BillingOverview>("/admin/billing/overview"),
+  tick: () => api.post<BillingTickStats>("/admin/billing/tick"),
+  treasury: () => api.get<TreasuryStatus>("/admin/billing/treasury"),
+  withdrawals: (status?: string) =>
+    api.get<PayoutRequestItem[]>(
+      status ? `/admin/billing/withdrawals?status=${status}` : "/admin/billing/withdrawals"
+    ),
+  createWithdrawal: (payload: {
+    kind: "usdc" | "bank";
+    amount_usdc?: string;
+    amount_egp?: string;
+    destination?: Record<string, unknown>;
+    notes?: string | null;
+  }) => api.post<PayoutRequestItem>("/admin/billing/withdrawals", payload),
+  approveWithdrawal: (id: string) =>
+    api.post<PayoutRequestItem>(`/admin/billing/withdrawals/${id}/approve`),
+  rejectWithdrawal: (id: string, notes?: string | null) =>
+    api.post<PayoutRequestItem>(`/admin/billing/withdrawals/${id}/reject`, { notes }),
+  executeWithdrawal: (id: string, executionReference: string) =>
+    api.post<PayoutRequestItem>(`/admin/billing/withdrawals/${id}/execute`, {
+      execution_reference: executionReference,
+    }),
+};

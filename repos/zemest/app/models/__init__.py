@@ -11,6 +11,14 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.token_usage import TokenUsage
 from app.models.admin import IPBan, UserSession, AuditLog, BlockedUser, SiteUser
 from app.models.scheduled_post import ScheduledPost, PostInsights
+from app.models.billing import (
+    BillingPlan,
+    BillingSubscription,
+    BillingTransaction,
+    BillingWebhookEvent,
+    PayoutRequest,
+    PaymentMethod,
+)
 
 __all__ = [
     "User",
@@ -32,4 +40,10 @@ __all__ = [
     "SiteUser",
     "ScheduledPost",
     "PostInsights",
+    "BillingPlan",
+    "BillingSubscription",
+    "BillingTransaction",
+    "BillingWebhookEvent",
+    "PayoutRequest",
+    "PaymentMethod",
 ]

@@ -19,6 +19,7 @@ import {
   ArrowLeft,
   LogOut,
   Loader2,
+  CreditCard,
 } from "lucide-react";
 import { MobileSidebar } from "@/components/site/mobile-sidebar";
 import { DashboardQueryProvider } from "@/components/dashboard-query-provider";
@@ -35,6 +36,7 @@ const sidebarItems = [
   { label: "Style Learning", href: "/style", icon: Palette },
   { label: "Scheduler", href: "/scheduler", icon: Calendar },
   { label: "Insights", href: "/insights", icon: BarChart3 },
+  { label: "Billing", href: "/billing", icon: CreditCard },
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 

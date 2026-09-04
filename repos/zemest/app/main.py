@@ -223,6 +223,136 @@ async def lifespan(app: FastAPI):
                 _mlog.getLogger("app.main").warning(
                     "Optional admin-table migration skipped (SQLite/older PG)", exc_info=True
                 )
+
+            # --- Billing (post-legacy rails) — idempotent DDL -------------
+            # payoneer (PRIMARY) / paymob (BACKUP) / usdc_solana (crypto).
+            # Alembic (b2f0b0001_billing_rails) is the authoritative path;
+            # this block makes single-process boots self-healing.
+            try:
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS billing_plans (
+                        id UUID PRIMARY KEY,
+                        code VARCHAR(30) NOT NULL UNIQUE,
+                        name VARCHAR(100) NOT NULL,
+                        description TEXT,
+                        price_egp NUMERIC(12,2) NOT NULL,
+                        price_usdc NUMERIC(18,6) NOT NULL,
+                        billing_interval VARCHAR(20) NOT NULL DEFAULT 'monthly',
+                        trial_days INTEGER NOT NULL DEFAULT 0,
+                        limits JSON,
+                        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                """))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS billing_subscriptions (
+                        id UUID PRIMARY KEY,
+                        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        plan_id UUID NOT NULL REFERENCES billing_plans(id),
+                        payment_method VARCHAR(30) NOT NULL DEFAULT 'payoneer',
+                        status VARCHAR(20) NOT NULL DEFAULT 'trialing',
+                        current_period_start TIMESTAMP,
+                        current_period_end TIMESTAMP,
+                        cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+                        canceled_at TIMESTAMP,
+                        provider_customer_ref VARCHAR(100),
+                        provider_subscription_ref VARCHAR(100),
+                        dunning_attempts INTEGER NOT NULL DEFAULT 0,
+                        dunning_next_retry_at TIMESTAMP,
+                        last_payment_at TIMESTAMP,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP,
+                        UNIQUE(tenant_id)
+                    )
+                """))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS billing_transactions (
+                        id UUID PRIMARY KEY,
+                        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                        subscription_id UUID REFERENCES billing_subscriptions(id) ON DELETE SET NULL,
+                        plan_id UUID REFERENCES billing_plans(id),
+                        kind VARCHAR(30) NOT NULL DEFAULT 'subscription_payment',
+                        payment_method VARCHAR(30) NOT NULL,
+                        status VARCHAR(30) NOT NULL DEFAULT 'pending',
+                        amount NUMERIC(12,2) NOT NULL,
+                        amount_usdc NUMERIC(18,6),
+                        currency VARCHAR(8) NOT NULL DEFAULT 'EGP',
+                        idempotency_key VARCHAR(120) NOT NULL UNIQUE,
+                        provider_reference VARCHAR(120),
+                        checkout_url VARCHAR(500),
+                        solana_reference VARCHAR(200),
+                        paid_at TIMESTAMP,
+                        voided_at TIMESTAMP,
+                        failed_reason VARCHAR(255),
+                        raw JSON,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                """))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS billing_webhook_events (
+                        id UUID PRIMARY KEY,
+                        provider VARCHAR(30) NOT NULL,
+                        event_id VARCHAR(120) NOT NULL,
+                        event_type VARCHAR(60),
+                        payload JSON,
+                        processed BOOLEAN NOT NULL DEFAULT FALSE,
+                        processing_error TEXT,
+                        received_at TIMESTAMP,
+                        processed_at TIMESTAMP,
+                        UNIQUE(provider, event_id)
+                    )
+                """))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS payout_requests (
+                        id UUID PRIMARY KEY,
+                        tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
+                        requested_by UUID NOT NULL REFERENCES users(id),
+                        kind VARCHAR(20) NOT NULL DEFAULT 'usdc',
+                        amount_usdc NUMERIC(18,6),
+                        amount_egp NUMERIC(12,2),
+                        destination JSON,
+                        status VARCHAR(20) NOT NULL DEFAULT 'request',
+                        approvers JSON,
+                        execution_reference VARCHAR(120),
+                        notes TEXT,
+                        created_at TIMESTAMP,
+                        updated_at TIMESTAMP
+                    )
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_billing_txn_pending_usdc ON billing_transactions(payment_method, status)"))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_billing_subscription_status ON billing_subscriptions(status, current_period_end)"))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_payout_requests_status ON payout_requests(status, created_at)"))
+                for _col, _ddl in (
+                    ("usdc_wallet_address", "VARCHAR(64)"),
+                ):
+                    try:
+                        await conn.execute(text(f"ALTER TABLE tenants ADD COLUMN {_col} {_ddl}"))
+                    except Exception:
+                        pass
+                try:
+                    await conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_tenants_usdc_wallet_address ON tenants(usdc_wallet_address)"))
+                except Exception:
+                    pass
+                # Seed the plan catalog (idempotent).
+                try:
+                    from app.services.billing.subscription_engine import ensure_default_plans as _seed
+                    from app.database import async_session as _seed_session
+                    async with _seed_session() as _s:
+                        await _seed(_s)
+                except Exception:
+                    _mlog.getLogger("app.main").warning(
+                        "Plan seeding deferred (alembic will handle it)", exc_info=True
+                    )
+            except Exception:
+                _mlog.getLogger("app.main").warning(
+                    "Optional billing-table migration skipped", exc_info=True
+                )
     except Exception:
         # DB may not be ready yet — but never SILENTLY: the operator must see it
         _mlog.getLogger("app.main").error("Startup migration block failed", exc_info=True)
@@ -249,6 +379,24 @@ async def lifespan(app: FastAPI):
         async def _personality_job():
             from app.tasks.style_tasks import _rebuild_all_personalities_async
             await _rebuild_all_personalities_async()
+
+        async def _billing_tick_job():
+            # Monthly-cycle engine: RENEW / DUNNING / EXPIRE / USDC settle+void.
+            # Idempotent (deterministic invoice keys + CAS everywhere) so an
+            # hourly cadence is safe; N replicas each with SCHEDULER_INLINE_WORKER
+            # would double-sweep harmlessly (same keys, same CAS).
+            from app.services.billing.subscription_engine import billing_tick as _tick
+            from app.database import async_session as _billing_session
+            try:
+                async with _billing_session() as _s:
+                    stats = await _tick(_s, webhook_base_url=_settings_public_base())
+                _mlog.getLogger("app.main").info("Billing tick: %s", stats)
+            except Exception:
+                _mlog.getLogger("app.main").warning("Billing tick failed", exc_info=True)
+
+        def _settings_public_base() -> str:
+            from app.config import get_settings as _gs
+            return (_gs().BILLING_WEBHOOK_PUBLIC_URL or "").rstrip("/")
 
         if str(getattr(settings, "SCHEDULER_INLINE_WORKER", True)).lower() in (
             "1", "true", "yes", "on",
@@ -280,9 +428,18 @@ async def lifespan(app: FastAPI):
             _personality_job, "cron", day_of_week="sun", hour=3, minute=0,
             id="rebuild-personality-weekly", max_instances=1, coalesce=True,
         )
+
+        # Hourly billing cycle (post-legacy rails: renewals, dunning,
+        # expiry, USDC on-chain settlement). Interval trigger: first run
+        # one hour after boot, then hourly; coalesce catches up after a
+        # restart without stacking.
+        scheduler.add_job(
+            _billing_tick_job, "interval", seconds=3600,
+            id="billing-cycle", max_instances=1, coalesce=True,
+        )
         scheduler.start()
         _mlog.getLogger("app.main").info(
-            "APScheduler started (publish 30s, trainer 45s, weekly rebuild Sun 03:00 Cairo)")
+            "APScheduler started (publish 30s, trainer 45s, billing hourly, weekly rebuild Sun 03:00 Cairo)")
     except Exception:
         _mlog.getLogger("app.main").warning("APScheduler failed to start", exc_info=True)
 
@@ -315,6 +472,16 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.payments.paymob import close_client as _close_paymob
         await _close_paymob()
+    except Exception:
+        pass
+    try:
+        from app.services.billing.providers.payoneer import close_client as _close_payoneer
+        await _close_payoneer()
+    except Exception:
+        pass
+    try:
+        from app.services.billing.providers.usdc_solana import close_client as _close_solana
+        await _close_solana()
     except Exception:
         pass
     await engine.dispose()
@@ -411,6 +578,11 @@ app.include_router(api_router)
 from app.admin.api import router as admin_api_router  # noqa: E402
 
 app.include_router(admin_api_router)
+
+# Billing admin REST API (treasury / withdrawals / tick / overview).
+from app.admin.billing import router as admin_billing_router  # noqa: E402
+
+app.include_router(admin_billing_router)
 
 # Register custom admin dashboard route — must run BEFORE setup_admin so
 # `/_admin/dashboard` is matched before sqladmin's mount on `/_admin`.

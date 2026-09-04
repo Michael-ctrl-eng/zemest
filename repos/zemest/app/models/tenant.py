@@ -68,6 +68,12 @@ class Tenant(Base):
     # --- External order API config ---
     order_api_config: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
 
+    # --- Billing (new rails: payoneer / paymob / usdc_solana) ---
+    # Merchant's Solana wallet (base58 pubkey) — payout destination for the
+    # USDC-Solana rail and the identity matching on-chain subscription
+    # payments. NULL when the tenant does not use the crypto rail.
+    usdc_wallet_address: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.utcnow())
     updated_at: Mapped[datetime] = mapped_column(
@@ -82,3 +88,10 @@ class Tenant(Base):
     orders = relationship("Order", back_populates="tenant", cascade="all, delete-orphan")
     crawl_jobs = relationship("CrawlJob", back_populates="tenant", cascade="all, delete-orphan")
     knowledge_base_rel = relationship("KnowledgeBase", back_populates="tenant", uselist=False)
+    billing_subscription = relationship(
+        "BillingSubscription", back_populates="tenant", uselist=False,
+        cascade="all, delete-orphan", lazy="selectin",
+    )
+    billing_transactions = relationship(
+        "BillingTransaction", back_populates="tenant", cascade="all, delete-orphan",
+    )

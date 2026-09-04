@@ -60,6 +60,10 @@ server.log
 .env.*
 repos/*/.env
 repos/*/.env.*
+# env TEMPLATES are secret-free and safe to commit (deploy/.env.example,
+# repos/zemest/.env.example)
+!.env.example
+!repos/*/.env.example
 
 # python backend runtime
 repos/*/.venv

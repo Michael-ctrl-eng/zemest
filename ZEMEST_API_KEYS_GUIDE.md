@@ -101,6 +101,88 @@ Backend supports SMTP (aiosmtplib already installed):
 
 ---
 
+## 7. Billing payment rails — Payoneer (PRIMARY) / Paymob (BACKUP) / USDC-Solana (crypto)
+
+The subscription stack runs on three rails with NO third-party subscription
+service. Each rail is optional — `/api/billing/rails` (and the checkout
+buttons) only shows the ones you configure. Plans are seeded automatically
+(Starter 750 EGP / Growth 1,850 EGP / Pro 3,900 EGP per month, each with a
+USDC price).
+
+### 7a. Payoneer Checkout — the primary card rail (~30 min + approval)
+
+1. Go to **https://www.payoneer.com** → Business account → apply for
+   **Payoneer Checkout** (card acceptance for your market)
+2. Once approved, open the partner/developer settings → generate a
+   **server-to-server API token**
+3. Configure the webhook: point it at
+   `https://your-domain.com/api/payments/webhook/payoneer` and copy the
+   signing secret the portal gives you
+4. Put in `repos/zemest/.env`:
+   ```
+   PAYONEER_API_TOKEN=your-server-token
+   PAYONEER_WEBHOOK_SECRET=whsec-from-the-portal
+   PAYONEER_PARTNER_ID=optional
+   PAYONEER_PROGRAM_ID=optional
+   ```
+   Optional header tweaks (only if your portal differs from the default):
+   `PAYONEER_WEBHOOK_ALGO=sha256|sha512`, `PAYONEER_SIG_HEADER=X-Payoneer-Signature`
+
+### 7b. Paymob — the backup rail for Egypt (EGP) (~1 hour)
+
+Reuses the existing audited Paymob integration (Intention API).
+
+1. Go to **https://egypt.paymob.com** → merchant dashboard → Developers
+2. Create a **server-side secret key** (Token auth) and note your
+   **integration ids** (card, wallet, installments…)
+3. Dashboard → Webhooks → set the secret and point callbacks at
+   `https://your-domain.com/api/payments/webhook/paymob` (billing) — buyer
+   order payments keep using `/api/payments/webhook`
+4. Put in `repos/zemest/.env`:
+   ```
+   PAYMOB_API_KEY=egy_sk_live_...
+   PAYMOB_INTEGRATION_IDS=12345,6789
+   PAYMOB_WEBHOOK_HMAC_SECRET=your-hmac-secret
+   ```
+
+### 7c. USDC on Solana — the crypto rail (~15 min, no approval)
+
+For wallet users. The backend talks DIRECTLY to a Solana RPC node — there
+is no sidecar service and no custody: the platform only watches the
+treasury wallet.
+
+1. Create a dedicated **treasury wallet** (hardware or hot wallet you
+   control — NEVER paste its private key anywhere, the app does not sign)
+2. Fund it with a little SOL for rent/fees if you will send from it
+   (sending is done offline; the app only reads)
+3. Put in `repos/zemest/.env`:
+   ```
+   USDC_TREASURY_WALLET=YourBase58TreasuryAddress
+   SOLANA_RPC_URL=https://api.mainnet-beta.solana.com   # or your paid RPC
+   # optional: SOLANA_RPC_API_TOKEN=... USDC_CONFIRMATIONS_REQUIRED=32
+   ```
+   The USDC mint is already the mainnet one; override `USDC_MINT_ADDRESS`
+   for devnet testing.
+4. Deposits are matched automatically by the hourly billing sweep (memo
+   reference first, exact amount always required, confirmations gated)
+
+### 7d. Shared billing settings (all rails)
+
+```
+BILLING_ENABLED=true
+BILLING_WEBHOOK_PUBLIC_URL=https://your-domain.com
+BILLING_USD_TO_EGP_RATE=48.0
+BILLING_DUNNING_MAX_ATTEMPTS=4
+USDC_AMOUNT_TOLERANCE=100            # micro-USDC (0.0001)
+TREASURY_MIN_RESERVE_USDC=10.0
+TREASURY_BANK_LABEL=Operator bank account (configured offline)
+```
+
+`BILLING_WEBHOOK_PUBLIC_URL` matters: it pins the callback origin so a
+Host-header spoof cannot hijack notification URLs.
+
+---
+
 ## What you DON'T need (already free/built-in)
 
 - **Voice transcription** — local faster-whisper, zero cost, no key
@@ -108,6 +190,7 @@ Backend supports SMTP (aiosmtplib already installed):
 - **Product extraction** — trafilatura + JSON-LD/OG parsing, no key
 - **Web crawling** — built-in (now SSRF-guarded)
 - **Hosting to test** — the platform runs right here in preview
+- **Crypto custody service** — the USDC rail is direct JSON-RPC against Solana: no sidecar, no signer, no key custody
 
 ## Total monthly cost for first pilot (realistic)
 

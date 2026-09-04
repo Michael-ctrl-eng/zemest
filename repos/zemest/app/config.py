@@ -101,6 +101,74 @@ class Settings(BaseSettings):
     PAYMOB_BASE_URL: str = "https://egypt.paymob.com"  # Egypt region Intention API base
     PAYMOB_CURRENCY: str = "EGP"
 
+    # ------------------------------------------------------------------
+    # Billing — post-legacy payment rails (billing/ subscription stack).
+    #   payoneer (PRIMARY) | paymob (BACKUP) | usdc_solana (crypto rail).
+    # No settings exist for the removed legacy card rail. All secrets are env-injected; defaults are inert.
+    # ------------------------------------------------------------------
+    # Rails availability switch (the /api/billing/rails endpoint reports
+    # only rails whose credentials are configured).
+    BILLING_ENABLED: bool = True
+
+    # Fixed public webhook base — the ONLY source for webhook/callback URLs
+    # handed to providers. When set it overrides request.base_url, killing
+    # Host-header notification_url hijacks (audit D5 finding :301).
+    BILLING_WEBHOOK_PUBLIC_URL: str = ""
+
+    # EGP-per-USD rate used by the fiat rails when converting a plan's USD
+    # list price to EGP (Payoneer charges USD; Paymob charges EGP). The
+    # USDC rail always uses the plan's price_usdc directly.
+    BILLING_USD_TO_EGP_RATE: float = 48.0
+
+    # Dunning schedule: max retry attempts before past_due → canceled, and
+    # the retry backoff base (retry N happens after base * 2^(N-1) days).
+    BILLING_DUNNING_MAX_ATTEMPTS: int = 4
+    BILLING_DUNNING_RETRY_BASE_DAYS: float = 1.0
+
+    # --- Payoneer (PRIMARY rail — Payoneer Checkout) -------------------
+    # API token from the Payoneer partner portal (server-to-server).
+    PAYONEER_API_TOKEN: str = ""
+    # Checkout API base. Default: production; sandbox available for tests.
+    PAYONEER_API_BASE_URL: str = "https://api.payoneer.com"
+    # Partner/program identifiers echoed in checkout requests.
+    PAYONEER_PARTNER_ID: str = ""
+    PAYONEER_PROGRAM_ID: str = ""
+    # HMAC-SHA256 webhook signing secret (fail-closed when unset).
+    PAYONEER_WEBHOOK_SECRET: str = ""
+    # Webhook HMAC algorithm: sha256 (default) or sha512, and the header
+    # Payoneer delivers the signature in (override if the portal differs).
+    PAYONEER_WEBHOOK_ALGO: str = "sha256"
+    PAYONEER_SIG_HEADER: str = "X-Payoneer-Signature"
+    PAYONEER_CURRENCY: str = "USD"
+    # Payout (withdrawal) API scope — read/poll payout status by payout id.
+    PAYONEER_PAYOUT_API_BASE_URL: str = "https://api.payoneer.com/v4"
+
+    # --- USDC over Solana (crypto rail — direct JSON-RPC, NO sidecar) --
+    # Public RPC endpoint (mainnet-beta default; point to a paid RPC with
+    # auth token for production volume).
+    SOLANA_RPC_URL: str = "https://api.mainnet-beta.solana.com"
+    SOLANA_RPC_API_TOKEN: str = ""  # appended as ?api-token= for paid RPCs
+    # USDC (SPL) mint — mainnet default; override for devnet testing:
+    #   devnet: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEAEDd9UXpYvNRL
+    USDC_MINT_ADDRESS: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    # Platform treasury wallet (base58) — receives subscription payments,
+    # funds merchant payouts. Deposit monitoring scans this address.
+    USDC_TREASURY_WALLET: str = ""
+    # Number of confirmations before an on-chain credit is final.
+    USDC_CONFIRMATIONS_REQUIRED: int = 32
+    # Polling: how many recent signatures the USDC check pulls per sweep.
+    USDC_SCAN_LIMIT: int = 40
+    # Micro-USDC tolerance when matching an on-chain amount to an invoice
+    # (payers sometimes send with 6-decimal rounding).
+    USDC_AMOUNT_TOLERANCE: int = 100  # 0.0001 USDC
+
+    # --- Treasury withdrawals (admin, 2-approval workflow) -------------
+    # Minimum USDC treasury balance that must REMAIN after a withdrawal.
+    TREASURY_MIN_RESERVE_USDC: float = 10.0
+    # Operator-facing bank destination summary shown in the admin UI (no
+    # account numbers here — those live in the operator's bank portal).
+    TREASURY_BANK_LABEL: str = "Operator bank account (configured offline)"
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
