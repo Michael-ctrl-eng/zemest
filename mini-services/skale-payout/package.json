@@ -1,0 +1,18 @@
+{
+  "name": "zemest-skale-payout",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SKALE Network payout sidecar — sends USDC (ERC-20) or native token payouts, HMAC-authenticated, idempotent. Holds the wallet key server-side; the FastAPI backend authorizes each transfer with an HMAC signature.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "health": "node healthcheck.js"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

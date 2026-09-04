@@ -145,6 +145,56 @@ class Settings(BaseSettings):
     # request redirected genuine Paymob callbacks to an attacker host).
     PUBLIC_BASE_URL: str = ""
 
+    # ------------------------------------------------------------------ #
+    # Billing & subscriptions platform (Stripe-grade + Payoneer + SKALE)
+    # ------------------------------------------------------------------ #
+    # Stripe: international cards + Apple Pay + Google Pay. Server-side
+    # secret only; the browser sees nothing but a publishable token via
+    # hosted Checkout (the publishable key is public by design and carries
+    # zero charge power). Empty = rail disabled (falls back to Paymob).
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""   # whsec_... (from `stripe listen` / dashboard)
+    STRIPE_API_BASE: str = "https://api.stripe.com"
+    # Recurring Price object ids (stripe prices carry currency + amount).
+    # Create once:  stripe prices create -p growth -u ...
+    # or in the Dashboard; paste the price_xxx ids here.
+    STRIPE_PRICE_GROWTH: str = ""
+    STRIPE_PRICE_PRO: str = ""
+
+    # Payoneer: checkout + payouts (to Egypt bank / Payoneer balance in any
+    # country). Payoneer "for platforms" partner credentials; sandbox default.
+    # Field names/paths below match the partner program docs; when the
+    # concrete integration link is provided, app/services/billing/providers/
+    # payoneer.py is the single adapter to adjust (skills: payoneer analyzer).
+    PAYONEER_API_BASE: str = "https://api.sandbox.payoneer.com"
+    PAYONEER_PROGRAM_ID: str = ""
+    PAYONEER_CLIENT_ID: str = ""
+    PAYONEER_CLIENT_SECRET: str = ""
+    PAYONEER_WEBHOOK_SECRET: str = ""   # HMAC key over the raw callback body
+    PAYONEER_WEBHOOK_ALGO: str = "sha256"  # sha256 | sha512 (program-configured)
+
+    # SKALE Network payouts (USDC / native token) via the ethers.js sidecar
+    # mini-services/skale-payout. SKALE Europa is gas-free, EVM-compatible.
+    SKALE_PAYOUT_URL: str = "http://localhost:4010"
+    SKALE_PAYOUT_HMAC_SECRET: str = ""  # shared secret with the sidecar
+    # Defaults for the sidecar itself (documented in its .env.example):
+    #   SKALE_RPC_URL=https://mainnet.skalenodes.com/v1/green-giddoni  (Europa)
+    #   SKALE_CHAIN_ID=2046398127
+    #   SKALE_USDC_CONTRACT=<USDC token address from SKALE bridge docs>
+    #   SKALE_PAYOUT_PRIVATE_KEY=<funded wallet key — SERVER SIDE ONLY>
+
+    # Payout policy
+    PAYOUT_CURRENCY: str = "USD"
+    # Auto-approve payouts at or below this amount (smallest unit) when the
+    # account has no open fraud flags; above → admin approval queue.
+    PAYOUT_AUTO_APPROVE_MAX: int = 20000  # = $200.00
+    PAYOUT_MIN_AMOUNT: int = 1000         # = $10.00
+    PLATFORM_FEE_PCT: float = 0.0         # % kept from merchant payouts
+    # Max payout requests per user per day (fraud velocity)
+    PAYOUT_MAX_PER_DAY: int = 3
+    # EGP → USD conversion for payout rails (Payoneer/SKALE settle in USD)
+    EGP_TO_USD_RATE: float = 48.5
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

@@ -393,6 +393,23 @@ async def lifespan(app: FastAPI):
             from app.tasks.style_tasks import _rebuild_all_personalities_async
             await _guarded("rebuild-personality-weekly", _rebuild_all_personalities_async)
 
+        async def _billing_job():
+            # Monthly recurring engine: renew invoices on platform-managed
+            # rails (paymob/payoneer), advance dunning, expire canceled subs.
+            # Stripe recurrence is provider-managed and lands via webhooks —
+            # this tick is a no-op for it. Guarded by the per-job leader
+            # lock so N API replicas never double-charge or double-renew.
+            async def _run_billing_tick():
+                from app.services.billing.subscription_engine import billing_tick
+                from app.database import async_session as _billing_session
+
+                async with _billing_session() as billing_db:
+                    stats = await billing_tick(billing_db)
+                    if any(v for v in stats.values()):
+                        _mlog.getLogger("app.main").info("Billing tick: %s", stats)
+
+            await _guarded("billing-cycle", _run_billing_tick)
+
         if str(getattr(settings, "SCHEDULER_INLINE_WORKER", True)).lower() in (
             "1", "true", "yes", "on",
         ):
@@ -425,6 +442,13 @@ async def lifespan(app: FastAPI):
             _personality_job,
             "cron", day_of_week="sun", hour=3, minute=0,
             id="rebuild-personality-weekly", max_instances=1, coalesce=True,
+        )
+
+        # Billing cycle — hourly (renew/dunning/expire; leader-guarded).
+        scheduler.add_job(
+            _billing_job,
+            "interval", minutes=60,
+            id="billing-cycle", max_instances=1, coalesce=True,
         )
         scheduler.start()
         _mlog.getLogger("app.main").info(

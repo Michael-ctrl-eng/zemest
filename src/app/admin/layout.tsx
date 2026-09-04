@@ -13,6 +13,7 @@ import {
   BarChart3,
   Activity,
   ArrowLeft,
+  CreditCard,
 } from "lucide-react";
 import { authApi, adminApi, ApiError } from "@/lib/zemest-api";
 
@@ -24,6 +25,7 @@ const sidebarItems = [
   { label: "Sessions", href: "/admin/sessions", icon: MonitorPlay },
   { label: "Audit Log", href: "/admin/audit-log", icon: ScrollText },
   { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
+  { label: "Billing", href: "/admin/billing", icon: CreditCard },
   { label: "System Health", href: "/admin/health", icon: Activity },
 ];
 

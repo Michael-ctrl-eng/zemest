@@ -690,3 +690,242 @@ export const authApi = {
   },
   me: () => api.get<Me>("/auth/me"),
 };
+
+// ==========================================================================
+// Billing & subscriptions platform (Stripe rails + Payoneer + SKALE payouts)
+// ==========================================================================
+
+export interface BillingSubscription {
+  id: string;
+  plan: string;
+  status: string;
+  provider: string;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  canceled_at: string | null;
+  failed_attempts: number;
+}
+
+export interface BillingInvoice {
+  id: string;
+  number: string;
+  plan: string;
+  amount: number;
+  currency: string;
+  status: string;
+  period_start: string | null;
+  period_end: string | null;
+  paid_at: string | null;
+  payment_url: string | null;
+  line_items: Array<{ description: string; amount: number; currency: string; quantity: number }>;
+  attempt_count: number;
+  next_attempt_at: string | null;
+}
+
+export interface BillingPaymentMethod {
+  id: string;
+  provider: string;
+  kind: string;
+  brand: string | null;
+  last4: string | null;
+  is_default: boolean;
+}
+
+export interface BillingPayoutAccount {
+  id: string;
+  method: string;
+  label: string | null;
+  status: string;
+  is_default: boolean;
+  currency: string;
+  masked: string;
+}
+
+export interface BillingPayoutRequest {
+  id: string;
+  rail: string;
+  amount: number;
+  fee_amount: number;
+  net_amount: number;
+  currency: string;
+  status: string;
+  tx_hash: string | null;
+  requested_at: string | null;
+  processed_at: string | null;
+  failure_reason: string | null;
+}
+
+export interface BillingOverview {
+  plan: { key: string; name: string; user_plan: string };
+  subscription: BillingSubscription | null;
+  open_invoice: BillingInvoice | null;
+  invoices: BillingInvoice[];
+  payment_methods: BillingPaymentMethod[];
+  payouts: {
+    available_balance: number;
+    currency: string;
+    min_amount: number;
+    platform_fee_pct: number;
+    accounts: BillingPayoutAccount[];
+    requests: BillingPayoutRequest[];
+  };
+  rails: {
+    stripe_enabled: boolean;
+    payoneer_checkout: boolean;
+    paymob_enabled: boolean;
+    skale_payouts: boolean;
+    payout_fee_preview: { amount_100usd_fee: number };
+  };
+}
+
+export interface SubscribeResult {
+  subscription_id: string;
+  invoice_number: string;
+  invoice_amount: number;
+  invoice_currency: string;
+  checkout: { type: string; url?: string; invoice_number?: string; note?: string };
+}
+
+export const billingApi = {
+  overview: () => api.get<BillingOverview>("/billing/overview"),
+  subscribe: (plan: string, provider: string, successPath?: string) =>
+    api.post<SubscribeResult>("/billing/subscribe", {
+      plan,
+      provider,
+      success_path: successPath ?? null,
+    }),
+  cancel: (immediate = false, reason?: string | null) =>
+    api.post<{ status: string; subscription: BillingSubscription }>("/billing/cancel", {
+      immediate,
+      reason: reason ?? null,
+    }),
+  reactivate: () =>
+    api.post<{ status: string; subscription: BillingSubscription }>("/billing/reactivate"),
+  invoices: () => api.get<{ invoices: BillingInvoice[] }>("/billing/invoices"),
+  methods: () => api.get<{ methods: BillingPaymentMethod[] }>("/billing/methods"),
+  detachMethod: (id: string) => api.delete<{ status: string }>(`/billing/methods/${id}`),
+  addPayoutAccount: (method: string, details: string, label?: string | null, currency = "USD") =>
+    api.post<{ id: string; method: string; status: string; masked: string }>(
+      "/billing/payout-accounts",
+      { method, details, label: label ?? null, currency }
+    ),
+  removePayoutAccount: (id: string) =>
+    api.delete<{ status: string }>(`/billing/payout-accounts/${id}`),
+  requestPayout: (payoutAccountId: string, amount: number) =>
+    api.post<{
+      id: string;
+      status: string;
+      amount: number;
+      fee_amount: number;
+      net_amount: number;
+      rail: string;
+      tx_hash: string | null;
+    }>("/billing/payouts", { payout_account_id: payoutAccountId, amount }),
+};
+
+// --- Admin billing panel -------------------------------------------------
+
+export interface AdminBillingSubscription {
+  id: string;
+  user_id: string;
+  user_email: string | null;
+  user_name: string | null;
+  plan: string;
+  status: string;
+  provider: string;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  failed_attempts: number;
+  created_at: string | null;
+}
+
+export interface AdminBillingInvoice {
+  id: string;
+  number: string;
+  user_id: string;
+  plan: string;
+  amount: number;
+  currency: string;
+  status: string;
+  paid_at: string | null;
+  attempt_count: number;
+  next_attempt_at: string | null;
+  last_error: string | null;
+  created_at: string | null;
+}
+
+export interface AdminBillingPayout {
+  id: string;
+  user_id: string;
+  rail: string;
+  amount: number;
+  fee_amount: number;
+  net_amount: number;
+  currency: string;
+  status: string;
+  tx_hash: string | null;
+  provider_ref: string | null;
+  failure_reason: string | null;
+  approved_by: string | null;
+  destination: string | null;
+  requested_at: string | null;
+  processed_at: string | null;
+}
+
+export interface AdminBillingOverview {
+  active_subscriptions: number;
+  past_due_subscriptions: number;
+  canceled_subscriptions: number;
+  trialing_subscriptions: number;
+  mrr_cents: number;
+  lifetime_revenue_cents: number;
+  open_invoices: number;
+  payouts_pending: number;
+  payouts_paid_cents: number;
+  fraud_flags_open: number;
+}
+
+export interface AdminFraudFlag {
+  id: string;
+  user_id: string;
+  kind: string;
+  severity: string;
+  detail: string | null;
+  action_taken: string | null;
+  created_at: string | null;
+}
+
+export const adminBillingApi = {
+  overview: () => api.get<AdminBillingOverview>("/admin/billing/overview"),
+  subscriptions: (status?: string) =>
+    api.get<AdminBillingSubscription[]>(`/admin/billing/subscriptions${status ? `?status=${status}` : ""}`),
+  invoices: (status?: string) =>
+    api.get<AdminBillingInvoice[]>(`/admin/billing/invoices${status ? `?status=${status}` : ""}`),
+  payouts: (status?: string) =>
+    api.get<AdminBillingPayout[]>(`/admin/billing/payouts${status ? `?status=${status}` : ""}`),
+  approvePayout: (id: string) =>
+    api.post<{ status: string; id: string; tx_hash: string | null }>(`/admin/billing/payouts/${id}/approve`),
+  retryPayout: (id: string) =>
+    api.post<{ status: string; id: string; tx_hash: string | null }>(`/admin/billing/payouts/${id}/retry`),
+  fraudFlags: () => api.get<AdminFraudFlag[]>("/admin/billing/fraud"),
+  resolveFraudFlag: (id: string) =>
+    api.post<{ status: string }>(`/admin/billing/fraud/${id}/resolve`),
+  events: (limit = 50) => api.get<any[]>(`/admin/billing/events?limit=${limit}`),
+  runTick: () => api.post<Record<string, number>>("/admin/billing/tick"),
+  setSubscription: (userId: string, plan: string, reason?: string) =>
+    api.post<{ status: string; plan: string }>(`/admin/users/${userId}/subscription`, {
+      plan,
+      reason: reason ?? "admin grant",
+    }),
+};
+
+/** Format a smallest-unit amount as a display string (1299 → "$12.99"). */
+export function formatMoney(amount: number, currency = "USD"): string {
+  const symbol = currency === "USD" ? "$" : currency === "EGP" ? "EGP " : `${currency} `;
+  const value = (amount / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${symbol}${value}`;
+}

@@ -57,6 +57,9 @@ AI-STRATEGY.md §2 for the exact math.
 | 9 | `ADMIN_EMAIL` + `ADMIN_PASSWORD` | you pick them | free | ✅ first admin login |
 | 10 | `POSTIZ_*` (3 vars) | your Postiz instance | free self-hosted | ⬜ optional post scheduler sidecar |
 | 11 | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ADMIN_CHAT_ID` | @BotFather on Telegram → /newbot, then getUpdates for your chat id | free | ⬜ for instant report/alert notifications to your phone |
+| 13 | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` + `STRIPE_PRICE_GROWTH/PRO` | https://dashboard.stripe.com/apikeys + webhook endpoint + Prices | 2.9%+30¢ intl cards (charged to the buyer) | ⬜ international cards + Apple Pay + Google Pay subscriptions (Paymob covers Egypt) |
+| 14 | `PAYONEER_CLIENT_ID/SECRET/PROGRAM_ID` + `PAYONEER_WEBHOOK_SECRET` | Payoneer for platforms partner program | ~1-2% payout fee (receiver side) | ⬜ payouts to Egypt bank / Payoneer balance in any country |
+| 15 | `SKALE_PAYOUT_HMAC_SECRET` + `SKALE_PAYOUT_PRIVATE_KEY` + `SKALE_USDC_CONTRACT` | generate the HMAC secret yourself; burner wallet + USDC bridged to SKALE | $0 — SKALE Europa is gas-free | ⬜ USDC wallet payouts (fastest + cheapest rail) |
 | 12 | `VAULT_MASTER_KEY` | `python -c "import secrets; print(secrets.token_hex(32))"` (generate once, BACK IT UP) | free | ⬜ for the encrypted chat/profile vault (AES-256-GCM + zstd). Without it the vault panel shows "disabled" and everything else works |
 | 13 | GitHub Actions secrets | **none needed** — CI uses the built-in `GITHUB_TOKEN` | free | — |
 
@@ -265,6 +268,57 @@ crontab -e
 
 ---
 
+### Step 5b — Billing platform: cards + Apple Pay + Google Pay + Payoneer payouts (20 min, optional but recommended)
+
+The full Stripe-grade billing stack ships in the repo (`app/services/billing/`,
+`/dashboard/<shop>/billing`, `/admin/billing`). Paymob covers Egypt; these
+rails add worldwide coverage and merchant payouts.
+
+**Stripe (international cards + Apple Pay + Google Pay):**
+1. https://dashboard.stripe.com → activate account → Developers → API keys
+   → copy the **secret key** → `STRIPE_SECRET_KEY`.
+2. Product → add two recurring Prices: Growth $12.99/mo, Pro $34.99/mo →
+   copy `price_...` ids → `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_PRO`.
+3. Developers → Webhooks → Add endpoint →
+   `https://your-domain.com/api/payments/webhook/stripe` → events:
+   `invoice.paid`, `invoice.payment_failed`,
+   `customer.subscription.updated`, `customer.subscription.deleted`,
+   `charge.dispute.created`, `checkout.session.completed` → copy the
+   signing secret → `STRIPE_WEBHOOK_SECRET`.
+4. Apple Pay: Settings → Payment methods → Apple Pay → add your domain
+   (Stripe hosts the domain-verification file automatically). Google Pay
+   needs no setup — the Stripe-hosted checkout shows it on supported
+   devices/browsers automatically.
+5. Recurrence is Stripe-managed (smart retries); every state change lands
+   through the VERIFIED webhook → the plan activates automatically.
+
+**Payoneer (payouts to Egypt bank / Payoneer balance worldwide):**
+1. Register a Payoneer "for platforms" partner account → get
+   `PAYONEER_CLIENT_ID`, `PAYONEER_CLIENT_SECRET`, `PAYONEER_PROGRAM_ID`.
+2. Sandbox first (`PAYONEER_API_BASE=https://api.sandbox.payoneer.com`),
+   then switch to production.
+3. Configure the payout-status callback URL to
+   `https://your-domain.com/api/payments/webhook/payoneer` with an HMAC
+   secret → `PAYONEER_WEBHOOK_SECRET`.
+4. When your concrete integration link/docs arrive, the
+   `payoneer-webhook-analyzer` skill maps the real payload fields onto
+   `app/services/billing/providers/payoneer.py` (single adapter file).
+
+**SKALE payouts (USDC, gas-free — the $0-fee rail):**
+1. Generate the shared secret:
+   `python -c "import secrets; print(secrets.token_hex(32))"` → set the
+   SAME value as `SKALE_PAYOUT_HMAC_SECRET` in `deploy/.env`.
+2. Create a burner wallet, fund it with USDC bridged to SKALE Europa:
+   `node -e "const {Wallet}=require('ethers');console.log(new Wallet(Wallet.createRandom().privateKey))"`
+   → `SKALE_PAYOUT_PRIVATE_KEY` (SERVER SIDE ONLY).
+3. Copy the USDC token contract on the SKALE chain (SKALE bridge docs) →
+   `SKALE_USDC_CONTRACT`.
+4. `docker compose -f deploy/docker-compose.prod.yml --profile skale up -d`
+
+Payout policy env: `PAYOUT_AUTO_APPROVE_MAX` (auto-send small clean
+payouts), `PAYOUT_MIN_AMOUNT`, `PAYOUT_MAX_PER_DAY` (fraud velocity),
+`PLATFORM_FEE_PCT`, `EGP_TO_USD_RATE`.
+
 ## 3. Ops runbook (day-2+)
 
 | Task | Command |
@@ -322,6 +376,9 @@ a streaming replica is worth it (SCALING.md §failover).
 - [ ] Search Console + sitemap submitted
 - [ ] Browse the site once → admin dashboard shows the visit in
       "Recent Visitors" (first-party analytics live)
+- [ ] Billing: subscribe with a real card on the hosted checkout →
+      plan flips automatically (check /admin/billing → invoice paid)
+- [ ] Payoneer/SKALE: request a small test payout → funds arrive
 - [ ] File a test report from a merchant dashboard → admin panel "Support
       Reports" + (if configured) the Telegram alert arrives with the code
 - [ ] Register a second account from the same IP → it must start WITHOUT

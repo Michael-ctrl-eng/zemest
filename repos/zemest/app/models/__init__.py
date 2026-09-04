@@ -15,6 +15,15 @@ from app.models.blog_post import BlogPost
 from app.models.analytics import AnalyticsBatch, AnalyticsDaily, VisitorProfile
 from app.models.report import SupportReport
 from app.models.vault import VaultFile
+from app.models.billing import (
+    Subscription,
+    Invoice,
+    PaymentMethod,
+    PaymentEvent,
+    PayoutAccount,
+    PayoutRequest,
+    FraudFlag,
+)
 
 __all__ = [
     "User",
@@ -42,4 +51,11 @@ __all__ = [
     "VisitorProfile",
     "SupportReport",
     "VaultFile",
+    "Subscription",
+    "Invoice",
+    "PaymentMethod",
+    "PaymentEvent",
+    "PayoutAccount",
+    "PayoutRequest",
+    "FraudFlag",
 ]

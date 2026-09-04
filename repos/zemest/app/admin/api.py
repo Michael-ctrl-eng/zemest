@@ -951,3 +951,394 @@ async def admin_extract_vault_file(
     )
     await db.commit()
     return result
+
+
+# ============================================================
+# Billing admin — subscriptions, invoices, payouts, fraud
+# (all superadmin-only, all audit-logged where money moves)
+# ============================================================
+
+@router.get("/billing/subscriptions")
+async def admin_billing_subscriptions(
+    status: Optional[str] = None,
+    limit: int = Query(50, le=200),
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """All subscriptions (optionally filtered by status) with owner info."""
+    from app.models.billing import Subscription
+
+    stmt = select(Subscription).order_by(Subscription.created_at.desc()).limit(limit)
+    if status:
+        stmt = stmt.where(Subscription.status == status)
+    subs = (await db.execute(stmt)).scalars().all()
+
+    user_ids = {s.user_id for s in subs}
+    users = {}
+    if user_ids:
+        rows = (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+        users = {u.id: u for u in rows}
+
+    return [
+        {
+            "id": str(s.id),
+            "user_id": str(s.user_id),
+            "user_email": users.get(s.user_id).email if users.get(s.user_id) else None,
+            "user_name": users.get(s.user_id).name if users.get(s.user_id) else None,
+            "plan": s.plan,
+            "status": s.status,
+            "provider": s.provider,
+            "current_period_end": s.current_period_end.isoformat() if s.current_period_end else None,
+            "cancel_at_period_end": s.cancel_at_period_end,
+            "failed_attempts": s.failed_attempts,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in subs
+    ]
+
+
+@router.get("/billing/invoices")
+async def admin_billing_invoices(
+    status: Optional[str] = None,
+    limit: int = Query(50, le=200),
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revenue view: every invoice, its status, dunning state."""
+    from app.models.billing import Invoice
+
+    stmt = select(Invoice).order_by(Invoice.created_at.desc()).limit(limit)
+    if status:
+        stmt = stmt.where(Invoice.status == status)
+    invoices = (await db.execute(stmt)).scalars().all()
+    return [
+        {
+            "id": str(i.id),
+            "number": i.number,
+            "user_id": str(i.user_id),
+            "plan": i.plan,
+            "amount": i.amount,
+            "currency": i.currency,
+            "status": i.status,
+            "paid_at": i.paid_at.isoformat() if i.paid_at else None,
+            "attempt_count": i.attempt_count,
+            "next_attempt_at": i.next_attempt_at.isoformat() if i.next_attempt_at else None,
+            "last_error": i.last_error,
+            "created_at": i.created_at.isoformat() if i.created_at else None,
+        }
+        for i in invoices
+    ]
+
+
+@router.get("/billing/overview")
+async def admin_billing_overview(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Headline counters for the admin billing panel."""
+    from app.models.billing import FraudFlag, Invoice, PayoutRequest, Subscription
+
+    async def _count(model, *filters):
+        stmt = select(func.count(model.id))
+        if filters:
+            stmt = stmt.where(*filters)
+        return int((await db.execute(stmt)).scalar() or 0)
+
+    mrr_cents = 0
+    active_subs = (await db.execute(
+        select(Subscription).where(Subscription.status == "active")
+    )).scalars().all()
+    for s in active_subs:
+        mrr_cents += {"growth": 1299, "pro": 3499}.get(s.plan, 0)
+
+    paid_invoices = (await db.execute(
+        select(func.coalesce(func.sum(Invoice.amount), 0)).where(Invoice.status == "paid")
+    )).scalar() or 0
+
+    return {
+        "active_subscriptions": len(active_subs),
+        "past_due_subscriptions": await _count(
+            Subscription, Subscription.status == "past_due"
+        ),
+        "canceled_subscriptions": await _count(
+            Subscription, Subscription.status == "canceled"
+        ),
+        "trialing_subscriptions": await _count(
+            Subscription, Subscription.status == "trialing"
+        ),
+        "mrr_cents": mrr_cents,
+        "lifetime_revenue_cents": int(paid_invoices),
+        "open_invoices": await _count(Invoice, Invoice.status.in_(("draft", "open"))),
+        "payouts_pending": await _count(
+            PayoutRequest, PayoutRequest.status.in_(("pending", "approved", "processing"))
+        ),
+        "payouts_paid_cents": int((await db.execute(
+            select(func.coalesce(func.sum(PayoutRequest.net_amount), 0)).where(
+                PayoutRequest.status == "paid"
+            )
+        )).scalar() or 0),
+        "fraud_flags_open": await _count(FraudFlag, FraudFlag.resolved_at.is_(None)),
+    }
+
+
+@router.get("/billing/payouts")
+async def admin_billing_payouts(
+    status: Optional[str] = None,
+    limit: int = Query(50, le=200),
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Payout queue: every request with rail, amounts, status."""
+    from app.models.billing import PayoutAccount, PayoutRequest
+
+    stmt = select(PayoutRequest).order_by(PayoutRequest.requested_at.desc()).limit(limit)
+    if status:
+        stmt = stmt.where(PayoutRequest.status == status)
+    payouts = (await db.execute(stmt)).scalars().all()
+
+    account_ids = {p.payout_account_id for p in payouts}
+    accounts = {}
+    if account_ids:
+        rows = (await db.execute(
+            select(PayoutAccount).where(PayoutAccount.id.in_(account_ids))
+        )).scalars().all()
+        accounts = {a.id: a for a in rows}
+
+    return [
+        {
+            "id": str(p.id),
+            "user_id": str(p.user_id),
+            "rail": p.rail,
+            "amount": p.amount,
+            "fee_amount": p.fee_amount,
+            "net_amount": p.net_amount,
+            "currency": p.currency,
+            "status": p.status,
+            "tx_hash": p.tx_hash,
+            "provider_ref": p.provider_ref,
+            "failure_reason": p.failure_reason,
+            "approved_by": p.approved_by,
+            "destination": (
+                accounts.get(p.payout_account_id).label
+                if accounts.get(p.payout_account_id)
+                else None
+            ),
+            "requested_at": p.requested_at.isoformat() if p.requested_at else None,
+            "processed_at": p.processed_at.isoformat() if p.processed_at else None,
+        }
+        for p in payouts
+    ]
+
+
+@router.post("/billing/payouts/{payout_id}/approve")
+async def admin_approve_payout(
+    payout_id: uuid.UUID,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve + execute a pending payout (manual review queue)."""
+    from app.models.billing import PayoutRequest
+    from app.services.billing import PayoutError
+    from app.services.billing.payouts import approve as approve_payout
+
+    payout = await db.get(PayoutRequest, payout_id)
+    if not payout:
+        raise HTTPException(status_code=404, detail="Payout request not found")
+    try:
+        payout = await approve_payout(db, payout, approved_by=f"admin:{admin.id}")
+    except PayoutError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    await _write_audit_log(
+        db, admin, "billing.payout.approve", "payout", str(payout_id),
+        metadata={"rail": payout.rail, "amount": payout.amount, "status": payout.status},
+    )
+    await db.commit()
+    return {"status": payout.status, "id": str(payout.id), "tx_hash": payout.tx_hash}
+
+
+@router.post("/billing/payouts/{payout_id}/retry")
+async def admin_retry_payout(
+    payout_id: uuid.UUID,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry a failed payout on its rail (idempotent per request id)."""
+    from app.models.billing import PayoutRequest
+    from app.services.billing.payouts import execute as execute_payout
+
+    payout = await db.get(PayoutRequest, payout_id)
+    if not payout:
+        raise HTTPException(status_code=404, detail="Payout request not found")
+    if payout.status != "failed":
+        raise HTTPException(status_code=409, detail=f"payout is {payout.status}, not failed")
+    payout.status = "approved"
+    payout.failure_reason = None
+    await db.commit()
+    payout = await execute_payout(db, payout)
+    await _write_audit_log(
+        db, admin, "billing.payout.retry", "payout", str(payout_id),
+        metadata={"rail": payout.rail, "status": payout.status},
+    )
+    await db.commit()
+    return {"status": payout.status, "id": str(payout.id), "tx_hash": payout.tx_hash}
+
+
+@router.get("/billing/fraud")
+async def admin_billing_fraud(
+    limit: int = Query(50, le=200),
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Open fraud flags (the review queue)."""
+    from app.models.billing import FraudFlag
+
+    flags = (await db.execute(
+        select(FraudFlag)
+        .where(FraudFlag.resolved_at.is_(None))
+        .order_by(FraudFlag.created_at.desc())
+        .limit(limit)
+    )).scalars().all()
+    return [
+        {
+            "id": str(f.id),
+            "user_id": str(f.user_id),
+            "kind": f.kind,
+            "severity": f.severity,
+            "detail": f.detail,
+            "action_taken": f.action_taken,
+            "created_at": f.created_at.isoformat() if f.created_at else None,
+        }
+        for f in flags
+    ]
+
+
+@router.post("/billing/fraud/{flag_id}/resolve")
+async def admin_resolve_fraud_flag(
+    flag_id: uuid.UUID,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve a fraud flag (releases payout holds when none remain)."""
+    from app.models.billing import FraudFlag
+
+    flag = await db.get(FraudFlag, flag_id)
+    if not flag:
+        raise HTTPException(status_code=404, detail="Flag not found")
+    flag.resolved_at = datetime.utcnow()
+    flag.resolved_by = f"admin:{admin.id}"
+    await _write_audit_log(
+        db, admin, "billing.fraud.resolve", "fraud_flag", str(flag_id), metadata={}
+    )
+    await db.commit()
+    return {"status": "resolved"}
+
+
+@router.get("/billing/events")
+async def admin_billing_events(
+    limit: int = Query(50, le=200),
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Webhook ledger — the audit trail of every money event."""
+    from app.models.billing import PaymentEvent
+
+    events = (await db.execute(
+        select(PaymentEvent).order_by(PaymentEvent.received_at.desc()).limit(limit)
+    )).scalars().all()
+    return [
+        {
+            "id": str(e.id),
+            "provider": e.provider,
+            "provider_event_id": e.provider_event_id,
+            "event_type": e.event_type,
+            "outcome": e.outcome,
+            "detail": e.detail,
+            "signature_valid": e.signature_valid,
+            "status": e.status,
+            "received_at": e.received_at.isoformat() if e.received_at else None,
+        }
+        for e in events
+    ]
+
+
+@router.post("/billing/tick")
+async def admin_billing_tick(
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually run the billing cycle (renew/dunning/expire)."""
+    from app.services.billing.subscription_engine import billing_tick
+
+    stats = await billing_tick(db)
+    await _write_audit_log(
+        db, admin, "billing.tick", "billing", "manual", metadata=stats
+    )
+    await db.commit()
+    return stats
+
+
+@router.post("/users/{user_id}/subscription")
+async def admin_set_subscription(
+    user_id: uuid.UUID,
+    body: dict,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Grant/override a subscription manually (comps, support cases).
+
+    Body: {"plan": "growth"|"pro", "status": "active", "reason": "..."}
+    """
+    from app.models.billing import Subscription
+    from app.services.billing.subscription_engine import PERIOD_DAYS
+
+    plan = str(body.get("plan") or "").lower()
+    if plan not in ("growth", "pro", "free"):
+        raise HTTPException(status_code=400, detail="plan must be growth|pro|free")
+    reason = str(body.get("reason") or "admin grant")[:200]
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    from sqlalchemy import update as _update
+    from datetime import datetime as _dt, timedelta as _td
+
+    if plan == "free":
+        await db.execute(
+            _update(Subscription)
+            .where(Subscription.user_id == user_id, Subscription.status.in_(("active", "trialing", "past_due")))
+            .values(status="canceled", canceled_at=_dt.utcnow(), canceled_by="admin",
+                    cancel_reason=reason)
+        )
+        user.plan = "free"
+        await db.commit()
+    else:
+        now = _dt.utcnow()
+        res = await db.execute(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.status.in_(("active", "trialing", "past_due")),
+            ).order_by(Subscription.created_at.desc())
+        )
+        sub = res.scalars().first()
+        if sub is None:
+            sub = Subscription(
+                user_id=user_id, plan=plan, status="active", provider="manual",
+                current_period_start=now,
+                current_period_end=now + _td(days=PERIOD_DAYS),
+            )
+            db.add(sub)
+        else:
+            sub.plan = plan
+            sub.status = "active"
+            sub.cancel_at_period_end = False
+            sub.current_period_end = now + _td(days=PERIOD_DAYS)
+        user.plan = plan
+        await db.commit()
+
+    await _write_audit_log(
+        db, admin, "billing.subscription.set", "user", str(user_id),
+        metadata={"plan": plan, "reason": reason},
+    )
+    await db.commit()
+    return {"status": "ok", "plan": plan}

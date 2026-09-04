@@ -39,6 +39,8 @@ x-app-base: &app-base
     DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD:?set in deploy/.env}@pgbouncer:6432/${POSTGRES_DB:-zemest}
     DATABASE_URL_SYNC: postgresql://${POSTGRES_USER:-zemest}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB:-zemest}
     REDIS_URL: redis://redis:6379/0
+    # SKALE payout sidecar (docker-internal name; profile skale)
+    SKALE_PAYOUT_URL: http://skale-payout:4010
     # Shared SQLite queue file (WAL, multi-process safe on one host).
     # Mounted on the SAME volume for api/scheduler/worker — without this the
     # worker consumes an empty private file and every task silently runs
@@ -237,6 +239,32 @@ services:
       resources:
         limits:
           memory: 1g
+
+
+  # -------------------------------------------- OPTIONAL skale-payout sidecar
+  # SKALE Network payout sender (USDC / native token). Holds the ONLY copy of
+  # the payout wallet key; the api authorizes each transfer with an HMAC
+  # signature over the request body (SKALE_PAYOUT_HMAC_SECRET — same value
+  # here and in deploy/.env). Internal network ONLY: never exposed to the
+  # internet, the browser never knows it exists.
+  # Enable with: --profile skale
+  skale-payout:
+    build:
+      context: ../mini-services/skale-payout
+    environment:
+      HOST: 0.0.0.0
+      SKALE_PAYOUT_HMAC_SECRET: ${SKALE_PAYOUT_HMAC_SECRET:-}
+      SKALE_RPC_URL: ${SKALE_RPC_URL:-https://mainnet.skalenodes.com/v1/green-giddoni}
+      SKALE_CHAIN_ID: ${SKALE_CHAIN_ID:-2046398127}
+      SKALE_USDC_CONTRACT: ${SKALE_USDC_CONTRACT:-}
+      SKALE_PAYOUT_PRIVATE_KEY: ${SKALE_PAYOUT_PRIVATE_KEY:-}
+    volumes:
+      - skale_journal:/app/.data
+    expose:
+      - "4010"
+    restart: unless-stopped
+    logging: *default-logging
+    profiles: [skale]
 
   # ---------------------------------------------------------------------- edge
   caddy:
