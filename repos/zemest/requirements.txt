@@ -37,14 +37,14 @@ beautifulsoup4==4.15.0
 jinja2>=3.1.6
 
 # PageIndex (self-hosted) + LLM routing
-litellm>=1.98.0
+litellm>=1.99.0
 pyyaml>=6.0.3
 
 # Voice transcription (local, free)
 faster-whisper>=1.2.1
 
 # Admin panel + security middleware
-sqladmin>=0.31.0
+sqladmin>=0.31.1
 slowapi>=0.1.10
 geoip2>=5.3.0
 
@@ -95,4 +95,4 @@ sqlite-vec>=0.1.9
 # First-party analytics: raw event batches are zstd-compressed before
 # Fernet encryption (stdlib zlib is the automatic fallback when this is
 # absent — analytics keeps working, just ~2-3x larger/slower blobs).
-zstandard>=0.23.0
+zstandard>=0.25.0
