@@ -9,7 +9,7 @@ itsdangerous>=2.2.0
 # Database
 sqlalchemy[asyncio]==2.0.52
 asyncpg==0.31.0
-alembic==1.19.1
+alembic==1.19.2
 psycopg2-binary==2.9.12
 
 # Auth
@@ -26,7 +26,7 @@ httpx==0.28.1
 # Task Queue — Huey (SQLite-native; replaces Celery+Redis which were dead
 # weight in this single-process deployment) + APScheduler for exact-time
 # periodic jobs in the uvicorn lifespan (replaces hand-rolled 30s loop).
-huey>=3.3.4  # 3.x API: filename= kwarg, thread consumer
+huey>=3.4.0  # 3.x API: filename= kwarg, thread consumer
 apscheduler>=3.11.3,<4.0
 
 # Web Crawling & Content Extraction
@@ -37,14 +37,14 @@ beautifulsoup4==4.15.0
 jinja2>=3.1.6
 
 # PageIndex (self-hosted) + LLM routing
-litellm>=1.98.0
+litellm>=1.100.0
 pyyaml>=6.0.3
 
 # Voice transcription (local, free)
 faster-whisper>=1.2.1
 
 # Admin panel + security middleware
-sqladmin>=0.31.0
+sqladmin>=0.31.1
 slowapi>=0.1.10
 geoip2>=5.3.0
 
@@ -60,13 +60,13 @@ pytest-cov==7.1.0
 aiosqlite==0.22.1
 # Real-world simulation tests
 hypothesis>=6.167.1
-schemathesis>=4.25.2
-locust>=2.46.4
+schemathesis>=4.26.0
+locust>=2.46.5
 pytest-playwright>=0.9.0
 mutmut>=3.7.0
 
 # Email
-aiosmtplib>=5.1.2
+aiosmtplib>=5.1.3
 
 # Fuzzy matching
 python-Levenshtein==0.27.4
@@ -95,4 +95,4 @@ sqlite-vec>=0.1.9
 # First-party analytics: raw event batches are zstd-compressed before
 # Fernet encryption (stdlib zlib is the automatic fallback when this is
 # absent — analytics keeps working, just ~2-3x larger/slower blobs).
-zstandard>=0.23.0
+zstandard>=0.25.0
