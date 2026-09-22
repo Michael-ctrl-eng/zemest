@@ -4,12 +4,12 @@
 # mutmut, schemathesis) that all have lazy-import fallbacks in the app
 # and would blow the sandbox disk (torch+CUDA ~4GB).
 fastapi>=0.141.1
-uvicorn[standard]==0.52.4
+uvicorn[standard]==0.53.0
 pydantic[email]>=2.13.5
 pydantic-settings>=2.15.0
-sqlalchemy[asyncio]==2.0.52
+sqlalchemy[asyncio]==2.0.53
 asyncpg==0.31.0
-alembic==1.19.1
+alembic==1.20.0
 aiosqlite==0.22.1
 python-jose[cryptography]>=3.5.0
 # At-rest Fernet encryption for channel tokens (direct dep — was transitive only)
@@ -17,25 +17,25 @@ cryptography>=50.0.1,<51
 bcrypt>=5.0.0,<6
 python-multipart>=0.0.32
 httpx==0.28.1
-huey>=3.3.4
+huey>=3.4.0
 apscheduler>=3.11.3,<4.0
 trafilatura==2.2.0
 beautifulsoup4==4.15.0
 jinja2>=3.1.6
-litellm>=1.98.0
+litellm>=1.101.0
 pyyaml>=6.0.3
-sqladmin>=0.31.0
+sqladmin>=0.31.1
 slowapi>=0.1.10
 geoip2>=5.3.0
 python-dotenv>=1.2.3
-aiosmtplib>=5.1.2
+aiosmtplib>=5.1.3
 aiofiles==25.1.0
 structlog>=26.1.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
-hypothesis>=6.167.1
-python-Levenshtein==0.27.4
+hypothesis>=6.168.0
+python-Levenshtein==0.27.5
 icalendar>=7.3.0
 python-dateutil>=2.9.0.post0
 eval_type_backport==0.4.0
@@ -44,4 +44,4 @@ itsdangerous>=2.2.0
 
 # First-party analytics blob compression (zlib fallback exists, but the
 # lean/CI profile should exercise the real codec the tests assert on)
-zstandard>=0.23.0
+zstandard>=0.25.0
