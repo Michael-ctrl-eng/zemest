@@ -1,22 +1,22 @@
 # Core
-fastapi>=0.141.1
-uvicorn[standard]==0.52.4
-pydantic[email]>=2.13.5
-pydantic-settings>=2.15.0
+fastapi>=0.151.0
+uvicorn[standard]==0.54.0
+pydantic[email]>=2.14.1
+pydantic-settings>=2.16.1
 # starlette SessionMiddleware (app/main.py) — was transitively provided before
 itsdangerous>=2.2.0
 
 # Database
-sqlalchemy[asyncio]==2.0.52
-asyncpg==0.31.0
-alembic==1.19.1
-psycopg2-binary==2.9.12
+sqlalchemy[asyncio]==2.1.5
+asyncpg==0.32.0
+alembic==1.20.0
+psycopg2-binary==2.9.13
 
 # Auth
 # python-jose 3.4.0: fixes CVE-2024-33663 algorithm confusion + CVE-2024-33664 JWE
 python-jose[cryptography]>=3.5.0
 # At-rest Fernet encryption for channel tokens (direct dep — was transitive only)
-cryptography>=50.0.1,<51
+cryptography>=50.0.2,<51
 bcrypt>=5.0.0,<6
 python-multipart>=0.0.32
 
@@ -26,30 +26,30 @@ httpx==0.28.1
 # Task Queue — Huey (SQLite-native; replaces Celery+Redis which were dead
 # weight in this single-process deployment) + APScheduler for exact-time
 # periodic jobs in the uvicorn lifespan (replaces hand-rolled 30s loop).
-huey>=3.3.4  # 3.x API: filename= kwarg, thread consumer
+huey>=3.4.0  # 3.x API: filename= kwarg, thread consumer
 apscheduler>=3.11.3,<4.0
 
 # Web Crawling & Content Extraction
-trafilatura==2.2.0
+trafilatura==2.3.1
 beautifulsoup4==4.15.0
 
 # Templating
 jinja2>=3.1.6
 
 # PageIndex (self-hosted) + LLM routing
-litellm>=1.98.0
+litellm>=1.106.0
 pyyaml>=6.0.3
 
 # Voice transcription (local, free)
 faster-whisper>=1.2.1
 
 # Admin panel + security middleware
-sqladmin>=0.31.0
+sqladmin>=0.32.0
 slowapi>=0.1.10
 geoip2>=5.3.0
 
 # Utilities
-python-dotenv>=1.2.3
+python-dotenv>=1.2.4
 aiofiles==25.1.0
 structlog>=26.1.0
 
@@ -59,20 +59,20 @@ pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 aiosqlite==0.22.1
 # Real-world simulation tests
-hypothesis>=6.167.1
-schemathesis>=4.25.2
-locust>=2.46.4
-pytest-playwright>=0.9.0
-mutmut>=3.7.0
+hypothesis>=6.170.5
+schemathesis>=4.32.1
+locust>=2.46.7
+pytest-playwright>=0.10.0
+mutmut>=3.8.0
 
 # Email
-aiosmtplib>=5.1.2
+aiosmtplib>=5.1.3
 
 # Fuzzy matching
-python-Levenshtein==0.27.4
+python-Levenshtein==0.27.5
 
 # Headless browser for JS-rendered sites
-playwright==1.62.0
+playwright==1.64.0
 
 # Multi-dialect language engine (optional — engine falls back to regex
 # detection if these are not installed, but installing them enables
@@ -95,4 +95,4 @@ sqlite-vec>=0.1.9
 # First-party analytics: raw event batches are zstd-compressed before
 # Fernet encryption (stdlib zlib is the automatic fallback when this is
 # absent — analytics keeps working, just ~2-3x larger/slower blobs).
-zstandard>=0.23.0
+zstandard>=0.25.0
